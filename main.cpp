@@ -1,30 +1,31 @@
 #include <iostream>
-#ifdef _WIN32
-#include <windows.h>
-#endif
-#include "json_service.hpp"
+
+#include "services/json_service.hpp"
+#include "config/app_config.hpp"
 
 int main()
 {
-#ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-    SetConsoleCP(CP_UTF8);
-#endif
+    // spdlog katmanını başlat
+    AppLog::init();
+    AppLog::info("Uygulama baslatildi.");
 
     JsonService service;
     AppConfig config{"127.0.0.1", 8080, true};
 
     std::string json_text = service.serialize(config);
-
-    std::printf("JSON Çıktısı (printf):\n%s\n", json_text.c_str());
+    std::cout << "JSON Çıktısı:\n"
+              << json_text << "\n";
 
     auto [host, port, _] = config;
-
-    std::printf("Host: %s, Port: %d\n", host.c_str(), port);
+    AppLog::info("Baglanti ayari okundu: " + host + ":" + std::to_string(port));
 
     if (auto parsed = service.deserialize(json_text))
     {
-        std::cout << "Ayrıştırma başarılı: " << parsed->host << "\n";
+        AppLog::info("Ayrıştırma basarili: " + parsed->host);
+    }
+    else
+    {
+        AppLog::error("JSON ayristirma basarisiz oldu!");
     }
 
     return 0;

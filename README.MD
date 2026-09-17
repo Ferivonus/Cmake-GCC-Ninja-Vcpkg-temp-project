@@ -50,3 +50,8 @@ cmake --build build
 ```powershell
 .\build\test.exe
 ```
+
+### 5. terminalden çalıştırma
+```powershell
+ cmake --preset gcc-ninja-debug; cmake --build build; ctest --test-dir build --output-on-failure
+ ```
