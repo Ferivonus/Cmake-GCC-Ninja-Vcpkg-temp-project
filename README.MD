@@ -1,6 +1,6 @@
-# CMake ile C++26 Test Projesi
+# Modern C++26 Proje Şablonu
 
-Bu proje; CMake, Ninja, GCC ve vcpkg entegrasyonuyla modern C++ (C++26) uygulamaları geliştirmek için hazırlanmış temel bir proje şablonudur.
+Bu proje; C++26 standardı, CMake, Ninja, GCC ve vcpkg entegrasyonuyla geliştirilmiş cross-platform (Windows / Linux) bir uygulama şablonudur. Bünyesinde JSON serileştirme (nlohmann-json), asenkron ağ ve HTTP/1.1 iletişimi (Boost.Beast / Asio), yapılandırılmış loglama (spdlog) ve birim test altyapısı (Catch2 / CTest) barındırır.
 
 ## Gereksinimler
 
@@ -12,7 +12,7 @@ Bu proje; CMake, Ninja, GCC ve vcpkg entegrasyonuyla modern C++ (C++26) uygulama
 
 ---
 
-## 1. Geliştirme Ortamı Kurulumu
+## 1. Geliştirme Ortamı Kurulumu (Windows)
 
 Gerekli araçlar sisteminizde kurulu değilse, **Yönetici olarak açılmış** bir PowerShell penceresinde ortam hazırlama betiğini çalıştırın:
 
@@ -25,33 +25,66 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ## 2. Yapılandırma (Configure)
 
-Ninja oluşturucusunu ve vcpkg bağımlılık zincirini tetikleyerek derleme dosyalarını hazırlar:
+İşletim sisteminize uygun preset ile derleme dosyalarını hazırlayın:
 
+**Windows (MinGW GCC):**
 ```powershell
-cmake --preset gcc-ninja-debug
+cmake --preset windows-debug
+```
+
+**Linux (GCC):**
+```bash
+cmake --preset linux-debug
 ```
 
 ---
 
 ## 3. Derleme (Build)
 
-Projeyi paralel olarak derler:
+Uygulamayı ve test süitini paralel olarak derler:
 
-```powershell
+```bash
 cmake --build build
 ```
 
 ---
 
-## 4. Çalıştırma (Run)
+## 4. Testleri Koşturma (Test)
 
-Üretilen çalıştırılabilir dosyayı başlatır:
+Catch2 ile yazılmış birim testleri CTest üzerinden çalıştırır:
 
-```powershell
-.\build\test.exe
+```bash
+ctest --test-dir build --output-on-failure
 ```
 
-### 5. terminalden çalıştırma
+---
+
+## 5. Çalıştırma (Run)
+
+Ana uygulamayı başlatır:
+
+**Windows:**
 ```powershell
- cmake --preset gcc-ninja-debug; cmake --build build; ctest --test-dir build --output-on-failure
- ```
+.\build\main_app.exe
+```
+
+**Linux:**
+```bash
+./build/main_app
+```
+
+---
+
+## 6. Hızlı Geliştirme Döngüsü (Tek Satır)
+
+Derleme, otomatik test ve çalıştırma adımlarını hatasız birbirine bağlar:
+
+**Windows (PowerShell):**
+```powershell
+cmake --build build && ctest --test-dir build --output-on-failure && .\build\main_app.exe
+```
+
+**Linux (Bash):**
+```bash
+cmake --build build && ctest --test-dir build --output-on-failure && ./build/main_app
+```
