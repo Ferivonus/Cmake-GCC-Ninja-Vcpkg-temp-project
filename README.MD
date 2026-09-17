@@ -1,6 +1,6 @@
 # Modern C++26 Proje Şablonu
 
-Bu proje; C++26 standardı, CMake, Ninja, GCC ve vcpkg entegrasyonuyla geliştirilmiş cross-platform (Windows / Linux) bir uygulama şablonudur. Bünyesinde JSON serileştirme (nlohmann-json), asenkron ağ ve HTTP/1.1 iletişimi (Boost.Beast / Asio), yapılandırılmış loglama (spdlog) ve birim test altyapısı (Catch2 / CTest) barındırır.
+Bu proje; C++26 standardı, CMake, Ninja, GCC ve vcpkg entegrasyonuyla geliştirilmiş cross-platform (Windows / Linux) bir uygulama şablonudur. Bünyesinde JSON serileştirme (nlohmann-json), asenkron ağ ve HTTP/1.1 iletişimi (Boost.Beast / Asio), yapılandırılmış loglama (spdlog) ve birim test altyapısı (Catch) barındırır.
 
 ## Gereksinimler
 
