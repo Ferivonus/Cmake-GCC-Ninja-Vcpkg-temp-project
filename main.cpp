@@ -15,11 +15,12 @@ int main()
     AppConfig config{"127.0.0.1", 8080, true};
 
     std::string json_text = service.serialize(config);
-    std::cout << "JSON Çıktısı:\n"
-              << json_text << "\n";
+
+    std::printf("JSON Çıktısı (printf):\n%s\n", json_text.c_str());
 
     auto [host, port, _] = config;
-    std::cout << "Host: " << host << ", Port: " << port << "\n";
+
+    std::printf("Host: %s, Port: %d\n", host.c_str(), port);
 
     if (auto parsed = service.deserialize(json_text))
     {
