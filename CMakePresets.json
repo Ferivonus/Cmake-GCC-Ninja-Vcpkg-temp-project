@@ -1,0 +1,17 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "gcc-ninja-debug",
+      "displayName": "GCC + Ninja + vcpkg (Debug)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      }
+    }
+  ]
+}
