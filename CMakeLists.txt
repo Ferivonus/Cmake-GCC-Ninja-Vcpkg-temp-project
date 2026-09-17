@@ -13,7 +13,7 @@ target_compile_features(json_service PRIVATE cxx_std_17)
 target_include_directories(json_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/services)
 target_link_libraries(json_service PRIVATE nlohmann_json::nlohmann_json)
 
-# 2. Log Katmanı (C++17)
+# 2. Log Katmanı (C++11)
 add_library(app_config STATIC config/app_config.cpp)
 target_compile_features(app_config PRIVATE cxx_std_11)
 target_include_directories(app_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/config)
