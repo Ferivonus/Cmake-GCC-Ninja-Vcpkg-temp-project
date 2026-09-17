@@ -81,10 +81,10 @@ Derleme, otomatik test ve çalıştırma adımlarını hatasız birbirine bağla
 
 **Windows (PowerShell):**
 ```powershell
-cmake --build build && ctest --test-dir build --output-on-failure && .\build\main_app.exe
+cmake --preset windows-debug ; cmake --build build ; ctest --test-dir build --output-on-failure ; .\build\main_app.exe
 ```
 
 **Linux (Bash):**
 ```bash
-cmake --build build && ctest --test-dir build --output-on-failure && ./build/main_app
+cmake --preset linux-debug && cmake --build build && ctest --test-dir build --output-on-failure && ./build/main_app
 ```
