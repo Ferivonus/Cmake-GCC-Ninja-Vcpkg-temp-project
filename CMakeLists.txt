@@ -19,7 +19,6 @@ target_compile_features(app_config PRIVATE cxx_std_11)
 target_include_directories(app_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/config)
 target_link_libraries(app_config PRIVATE spdlog::spdlog)
 
-# 3. Asıl Ana Uygulamanız (main.cpp) -> Diskte birebir 'test.exe' üretir
 add_executable(main_app main.cpp)
 target_compile_features(main_app PRIVATE cxx_std_26)
 target_compile_options(main_app PRIVATE $<$<CXX_COMPILER_ID:GNU>:-Wall -Wextra -Wpedantic>)
