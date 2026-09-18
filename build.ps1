@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param (
     [Parameter(Position = 0)]
     [ValidateSet("debug", "release", "d", "r")]
@@ -7,15 +7,16 @@ param (
     [switch]$Server,
     [string]$Client = "",
     [switch]$Tor,
-    [int]$Port = 8080,     [string]$HostAddress = "127.0.0.1",
+    [int]$Port = 8080,
+    [string]$HostAddress = "127.0.0.1",
     [string]$ProxyHost = "127.0.0.1",
-    [int]$ProxyPort = 9050,     [switch]$NoTest,
+    [int]$ProxyPort = 9050,
+    [switch]$NoTest,
     [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
 
-# Mod normalizasyonu
 if ($Mode -in @("debug", "d")) {
     $Config = "debug"
     $Preset = "windows-debug"
@@ -29,12 +30,12 @@ $ExePath = "$BuildDir/main_app.exe"
 
 Write-Host "=== [$($Config.ToUpper())] Hazirlik ve Yapilandirma ===" -ForegroundColor Cyan
 
-if ($Clean -and (Test-Path$BuildDir)) {
+if ($Clean -and (Test-Path -Path $BuildDir)) {
     Write-Host "Temiz derleme istenildi. Dizin temizleniyor: $BuildDir" -ForegroundColor Yellow
-    Remove-Item -Recurse -Force $BuildDir
+    Remove-Item -Recurse -Force -Path $BuildDir
 }
 
-# 1. CMake Yapılandırması (Configure)
+# 1. CMake Yapilandirmasi (Configure)
 cmake --preset $Preset
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Yapilandirma (CMake) basarisiz oldu!" -ForegroundColor Red
@@ -62,18 +63,13 @@ if (-not $NoTest) {
 # 4. Calistirma (Run)
 if ($Server) {
     Write-Host "`n=== Sunucu Baslatiliyor (Port: $Port) ===" -ForegroundColor Green
-    & $ExePath server $Port
+    & $ExePath "server" $Port
 }
 elseif ($Client -ne "") {
-    $ClientArgs = @("client", $Client, $HostAddress, $Port.ToString())
-    if ($Tor) {
-        $ClientArgs += "--tor"
-        $ClientArgs += "--proxy-host"
-        $ClientArgs += $ProxyHost
-        $ClientArgs += "--proxy-port"
-        $ClientArgs += $ProxyPort.ToString()
+    $ClientArgs = @("client", $Client, $HostAddress,$Port.ToString())
+    if ($Tor) {$ClientArgs += @("--tor", "--proxy-host", $ProxyHost, "--proxy-port", $ProxyPort.ToString())
     }
-    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client, Tor:$Tor) ===" -ForegroundColor Green
+    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client, Tor: $Tor) ===" -ForegroundColor Green
     & $ExePath @ClientArgs
 }
 else {

@@ -17,11 +17,19 @@ void print_usage(const char *program_name)
               << "       --tor                  Baglantiyi Tor SOCKS5 uzerinden gecmeye zorlar\n"
               << "       --proxy-host <ip>      Tor vekil host adresi (Varsayilan: 127.0.0.1)\n"
               << "       --proxy-port <port>    Tor vekil portu (Varsayilan: 9050, Tor Browser: 9150)\n\n"
-              << "     Ornekler:\n"
+              << "     Dogrudan Ikili Calistirma Ornekleri:\n"
               << "       Dogrudan Baglanti    : " << program_name << " client Ahmet 127.0.0.1 8080\n"
               << "       Tor Servisi (9050)   : " << program_name << " client Ahmet 127.0.0.1 8080 --tor\n"
               << "       Tor Browser (9150)   : " << program_name << " client Ahmet ex4mp1e...onion 8080 --proxy-port 9150\n"
-              << "       Uzak Tor Proxy       : " << program_name << " client Ahmet ex4mp1e...onion 8080 --proxy-host 192.168.1.10 --proxy-port 9050\n\n";
+              << "       Uzak Tor Proxy       : " << program_name << " client Ahmet ex4mp1e...onion 8080 --proxy-host 192.168.1.10 --proxy-port 9050\n\n"
+              << "  3) PowerShell Otomasyon Betigi (build.ps1) ile Calistirma:\n"
+              << "     Derleme, test ve calistirma sureclerini yonetmek icin 'build.ps1' kullanabilirsiniz:\n"
+              << "       Sunucu Baslatma      : .\\build.ps1 -Server\n"
+              << "       Ozel Port Sunucu     : .\\build.ps1 -Server -Port 8080\n"
+              << "       Istemci Baglantisi   : .\\build.ps1 -Client Ahmet\n"
+              << "       Tor Istemcisi        : .\\build.ps1 -Client Anonim -Tor -ProxyPort 9150\n"
+              << "       Release Modu         : .\\build.ps1 release -Server\n"
+              << "       Temiz Derleme (Clean): .\\build.ps1 -Clean -Server\n\n";
 }
 
 static bool parse_port(const std::string &str, unsigned short &out_port)

@@ -28,10 +28,13 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 ### Linux (Ubuntu / Debian)
-Gerekli derleme araçlarını ve kütüphaneleri yükleyin:
+Gerekli derleme araçlarını kurun ve vcpkg ortam değişkenini tanımlayın:
 
 ```bash
 sudo apt update && sudo apt install -y build-essential gcc-14 g++-14 cmake ninja-build git curl zip unzip tar pkg-config tor
+
+# vcpkg kurulu olduğu dizini ortam değişkeni olarak ekleyin:
+export VCPKG_ROOT="$HOME/vcpkg"
 ```
 
 ---
@@ -76,25 +79,17 @@ Projede `Debug` ve `Release` derlemeleri için ayrılmış bağımsız profiller
 
 **Windows (MinGW GCC):**
 ```powershell
-# Hata ayıklama sembolleriyle derleme için (build/debug)
 cmake --preset windows-debug
-
-# Maksimum performans, LTO ve strip optimizasyonu için (build/release)
 cmake --preset windows-release
 ```
 
 **Linux (GCC):**
 ```bash
-# Debug (build/debug)
 cmake --preset linux-debug
-
-# Release (build/release)
 cmake --preset linux-release
 ```
 
 ### B. Derleme (Build)
-
-Seçilen profile uygun derleme klasörünü derleyin:
 
 ```bash
 # Debug Derlemesi
@@ -105,8 +100,6 @@ cmake --build build/release
 ```
 
 ### C. Testleri Koşturma (CTest)
-
-Catch2 test süitlerini çalıştırın:
 
 ```bash
 # Debug Testleri
@@ -121,8 +114,6 @@ ctest --test-dir build/release --output-on-failure
 ## 4. Hızlı Geliştirme Döngüsü (Tek Satır Manuel Komutlar)
 
 ### Windows (PowerShell)
-PowerShell üzerinde ardışık komut ayracı olarak `;` kullanılır:
-
 ```powershell
 # Debug Modu (Yapılandır + Derle + Test + Çalıştır)
 cmake --preset windows-debug ; cmake --build build/debug ; ctest --test-dir build/debug --output-on-failure ; .\build\debug\main_app.exe server 8080
@@ -132,8 +123,6 @@ cmake --preset windows-release ; cmake --build build/release ; ctest --test-dir 
 ```
 
 ### Linux (Bash)
-POSIX kabuk standartlarında ardışık başarı kontrolü için `&&` operatörü kullanılır:
-
 ```bash
 # Debug Modu
 cmake --preset linux-debug && cmake --build build/debug && ctest --test-dir build/debug --output-on-failure && ./build/debug/main_app server 8080
@@ -170,16 +159,11 @@ HTTP API ve WebSocket havuzunu başlatır, SQLite veritabanını (`app_chat.db`)
 ./build/release/main_app server 8080 0.0.0.0
 ```
 
-**Sunucu Yetenekleri:**
-- **WebSocket Uç Noktası:** `ws://<host>:8080/ws` (Anlık broadcast, mesaj kimliği ve sunucu zaman damgası)
-- **HTTP REST CRUD:** `http://<host>:8080/api/config` (`GET`, `POST`, `DELETE`)
-- **Veritabanı:** `chat_messages` tablosunda WAL modunda eşzamanlı ve thread-safe kayıt
-
 ---
 
 ### B. İstemci Modu (Client)
 
-Terminal tabanlı, arka planda gelen mesajları anında yakalayan interaktif sohbet istemcisi:
+Terminal tabanlı interaktif sohbet istemcisi:
 
 **Windows (PowerShell):**
 ```powershell
