@@ -1,3 +1,8 @@
 ./build
 
 build/
+.vcpkg_installed/
+
+app_chat.db
+app_chat.db-shm
+app_chat.db-wal

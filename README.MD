@@ -47,17 +47,23 @@ Windows ortamında yapılandırma, derleme, test ve çalıştırma adımlarını
 # Yalnızca Debug modunda derle ve birim testleri koştur
 .\build.ps1
 
-# Debug sunucusunu başlat (Varsayılan Port: 8080)
+# Debug sunucusunu başlat (Varsayılan Port: 8080, Dinlenen IP: 0.0.0.0)
 .\build.ps1 -Server
 
-# Özel port ile sunucu başlat
-.\build.ps1 -Server -Port 9000
+# Özel port ve özel dinleme IP'si ile sunucu başlat
+.\build.ps1 -Server -Port 9000 -BindAddress 127.0.0.1
 
-# İstemci olarak bağlan
+# İstemci olarak bağlan (hedef varsayılan: 127.0.0.1)
 .\build.ps1 -Client Ahmet
 
-# Tor SOCKS5 vekili üzerinden istemci başlat (Tor Browser: 9150)
-.\build.ps1 -Client Anonim -Tor -ProxyPort 9150
+# Belirli bir hedefe (IP/domain) bağlan
+.\build.ps1 -Client Ahmet -Target 192.168.1.20 -Port 8080
+
+# Bir .onion gizli servisine bağlan (Tor otomatik devreye girer)
+.\build.ps1 -Client Anonim -Target chatroomxxxxxxxx.onion -ProxyPort 9150
+
+# Tor SOCKS5 vekili üzerinden düz bir IP'ye bağlan (Tor Browser: 9150)
+.\build.ps1 -Client Anonim -Target 127.0.0.1 -Tor -ProxyPort 9150
 
 # Release modunda (LTO + Strip) derle ve sunucuyu aç
 .\build.ps1 release -Server
@@ -67,7 +73,20 @@ Windows ortamında yapılandırma, derleme, test ve çalıştırma adımlarını
 
 # Derleme dizinini temizleyip sıfırdan derle
 .\build.ps1 -Clean -Server
+
+# Zaten build alınmış exe'yi, yeniden build almadan direkt çalıştır
+# (-Server/-Client ile çağrıldığında exe zaten varsa ZATEN OTOMATİK olarak
+#  yeniden build alınmaz; -SkipBuild sadece bunu elle zorlamak içindir)
+.\build.ps1 -SkipBuild -Server
+.\build.ps1 -SkipBuild -Client Ahmet -Target 192.168.1.20
+
+# Exe zaten var olsa bile zorla yeniden build al
+.\build.ps1 -Rebuild -Server
 ```
+
+> **Not:** `-BindAddress` yalnızca **sunucu** modunda (dinlenecek IP) kullanılır; `-Target` ise yalnızca **istemci** modunda (bağlanılacak IP/domain/`.onion` adresi) kullanılır. Eski `-HostAddress` ismi geriye dönük uyumluluk için `-Target` parametresine alias olarak bağlıdır.
+>
+> **Not:** `-Server` veya `-Client` ile çağrıldığında, `main_app.exe` zaten build edilmişse betik **otomatik olarak** hiçbir configure/build/test adımına dokunmaz ve doğrudan çalıştırır — bu sayede örneğin sunucu açıkken başka bir pencerede istemciyi başlatmak, çalışan sunucuyu kapatmaz. Exe henüz yoksa otomatik olarak önce build alınır. Zorla yeniden build almak için `-Rebuild`, build'e kesinlikle dokunmamak (exe yoksa hata verir) için `-SkipBuild` kullanılır.
 
 ---
 

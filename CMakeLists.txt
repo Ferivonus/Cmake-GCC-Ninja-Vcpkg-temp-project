@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.25)
+cmake_minimum_required(VERSION 3.30) # cxx_std_26 meta-ozelligi fiilen ancak 3.30+ ile derleyici bayragini ekliyor
 project(TemplateApp LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -45,7 +45,8 @@ target_link_libraries(backend_service PUBLIC
     Boost::asio
     Threads::Threads
     SQLite::SQLite3
-    $<$<PLATFORM_ID:Windows>:ws2_32 mswsock>
+    $<$<PLATFORM_ID:Windows>:ws2_32>
+    $<$<PLATFORM_ID:Windows>:mswsock>
 )
 
 add_library(client_service STATIC
@@ -59,7 +60,8 @@ target_link_libraries(client_service PUBLIC
     Boost::asio
     Threads::Threads
     nlohmann_json::nlohmann_json
-    $<$<PLATFORM_ID:Windows>:ws2_32 mswsock>
+    $<$<PLATFORM_ID:Windows>:ws2_32>
+    $<$<PLATFORM_ID:Windows>:mswsock>
 )
 
 add_executable(main_app main.cpp)

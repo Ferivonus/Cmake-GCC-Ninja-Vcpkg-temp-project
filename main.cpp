@@ -23,13 +23,19 @@ void print_usage(const char *program_name)
               << "       Tor Browser (9150)   : " << program_name << " client Ahmet ex4mp1e...onion 8080 --proxy-port 9150\n"
               << "       Uzak Tor Proxy       : " << program_name << " client Ahmet ex4mp1e...onion 8080 --proxy-host 192.168.1.10 --proxy-port 9050\n\n"
               << "  3) PowerShell Otomasyon Betigi (build.ps1) ile Calistirma:\n"
-              << "     Derleme, test ve calistirma sureclerini yonetmek icin 'build.ps1' kullanabilirsiniz:\n"
-              << "       Sunucu Baslatma      : .\\build.ps1 -Server\n"
-              << "       Ozel Port Sunucu     : .\\build.ps1 -Server -Port 8080\n"
-              << "       Istemci Baglantisi   : .\\build.ps1 -Client Ahmet\n"
-              << "       Tor Istemcisi        : .\\build.ps1 -Client Anonim -Tor -ProxyPort 9150\n"
-              << "       Release Modu         : .\\build.ps1 release -Server\n"
-              << "       Temiz Derleme (Clean): .\\build.ps1 -Clean -Server\n\n";
+              << "     Derleme, test ve calistirma sureclerini yonetmek icin 'build.ps1' kullanabilirsiniz.\n"
+              << "     -Server / -Client kullanildiginda, exe zaten build edilmisse OTOMATIK olarak\n"
+              << "     yeniden build alinmaz (calisan bir sunucuyu etkilemez), sadece calistirilir.\n"
+              << "     Build henuz alinmamissa ise otomatik olarak once build alinir.\n\n"
+              << "       Sunucu Baslatma          : .\\build.ps1 -Server\n"
+              << "       Ozel Port Sunucu         : .\\build.ps1 -Server -Port 8080\n"
+              << "       Istemci Baglantisi       : .\\build.ps1 -Client Ahmet -Target 127.0.0.1\n"
+              << "       Onion Adresine Baglanma  : .\\build.ps1 -Client Ahmet -Target ex4mp1e...onion -ProxyPort 9150\n"
+              << "       Tor Istemcisi (Duz IP)   : .\\build.ps1 -Client Anonim -Target 1.2.3.4 -Tor -ProxyPort 9150\n"
+              << "       Release Modu             : .\\build.ps1 release -Server\n"
+              << "       Temiz Derleme (Clean)    : .\\build.ps1 -Clean -Server\n"
+              << "       Zorla Yeniden Build      : .\\build.ps1 -Rebuild -Server\n"
+              << "       Build'e Hic Dokunma      : .\\build.ps1 -SkipBuild -Server\n\n";
 }
 
 static bool parse_port(const std::string &str, unsigned short &out_port)
