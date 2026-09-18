@@ -19,6 +19,7 @@ list(APPEND CMAKE_MODULE_PATH ${Catch2_DIR})
 find_package(boost_asio REQUIRED CONFIG)
 find_package(boost_beast REQUIRED CONFIG)
 find_package(SQLite3 REQUIRED)
+find_package(CLI11 CONFIG REQUIRED)
 
 add_library(json_service STATIC services/json_service.cpp)
 target_compile_features(json_service PRIVATE cxx_std_17)
@@ -75,6 +76,7 @@ target_link_options(main_app PRIVATE
 target_link_libraries(main_app PRIVATE 
     backend_service
     client_service
+    CLI11::CLI11
 )
 
 enable_testing()

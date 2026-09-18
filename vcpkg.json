@@ -8,6 +8,7 @@
     "catch2",
     "boost-beast",
     "boost-asio",
-    "sqlite3"
+    "sqlite3",
+    "cli11"
   ]
 }
