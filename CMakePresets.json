@@ -5,15 +5,13 @@
       "name": "base",
       "hidden": true,
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       }
     },
     {
-      "name": "windows-debug",
-      "displayName": "Windows (MinGW GCC + Ninja)",
+      "name": "windows-base",
+      "hidden": true,
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -27,8 +25,8 @@
       }
     },
     {
-      "name": "linux-debug",
-      "displayName": "Linux (GCC + Ninja)",
+      "name": "linux-base",
+      "hidden": true,
       "inherits": "base",
       "condition": {
         "type": "equals",
@@ -40,6 +38,82 @@
         "CMAKE_CXX_COMPILER": "g++",
         "VCPKG_TARGET_TRIPLET": "x64-linux"
       }
+    },
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "linux-debug",
+      "displayName": "Linux Debug",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "linux-release",
+      "displayName": "Linux Release",
+      "inherits": "linux-base",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release"
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug"
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-debug",
+      "configurePreset": "linux-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "linux-release",
+      "configurePreset": "linux-release",
+      "output": { "outputOnFailure": true }
     }
   ]
 }

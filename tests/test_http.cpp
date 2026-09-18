@@ -3,83 +3,93 @@
 #include <boost/beast/http.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ip/tcp.hpp>
+#include <nlohmann/json.hpp>
+#include "backend/http_handler.hpp"
+#include "backend/server_state.hpp"
 #include <string>
-#include <sstream>
+#include <memory>
 
 namespace http = boost::beast::http;
 namespace asio = boost::asio;
+using json = nlohmann::json;
 
-TEST_CASE("Boost.Beast HTTP/1.1 Istek ve Yanit Islemleri", "[http][beast]")
+TEST_CASE("Cloud API HTTP Handler Yonlendirme ve CRUD Dogrulamasi", "[http][api]")
 {
-    SECTION("HTTP/1.1 GET istegi standartlara uygun serilestirilmeli")
+    auto state = std::make_shared<backend::ServerState>();
+    state->config = AppConfig{"127.0.0.1", 8080, true};
+
+    SECTION("GET /api/config mevcut yapilandirmayi 200 OK ile donmeli")
     {
-        http::request<http::string_body> req{http::verb::get, "/api/v1/config", 11};
-        req.set(http::field::host, "127.0.0.1:8080");
-        req.set(http::field::user_agent, "ModernCpp-App/1.0");
+        http::request<http::string_body> req{http::verb::get, "/api/config", 11};
+        auto res = backend::handle_http_request(std::move(req), state);
 
-        std::stringstream ss;
-        ss << req;
-        std::string raw_req = ss.str();
-
-        CHECK(raw_req.find("GET /api/v1/config HTTP/1.1\r\n") != std::string::npos);
-        CHECK(raw_req.find("Host: 127.0.0.1:8080\r\n") != std::string::npos);
-        CHECK(raw_req.find("User-Agent: ModernCpp-App/1.0\r\n") != std::string::npos);
-    }
-
-    SECTION("HTTP/1.1 POST istegi govde ile birlikte serialize edilmeli")
-    {
-        http::request<http::string_body> post_req{http::verb::post, "/api/v1/save", 11};
-        post_req.set(http::field::host, "127.0.0.1:8080");
-        post_req.set(http::field::content_type, "application/json");
-        post_req.body() = "{\"active\":true}";
-        post_req.prepare_payload();
-
-        std::stringstream ss;
-        ss << post_req;
-        std::string raw_post = ss.str();
-
-        CHECK(raw_post.find("POST /api/v1/save HTTP/1.1\r\n") != std::string::npos);
-        CHECK(raw_post.find("Content-Length: 15\r\n") != std::string::npos);
-        CHECK(raw_post.find("{\"active\":true}") != std::string::npos);
-    }
-
-    SECTION("Ham HTTP 200 OK yaniti basariyla parse edilmeli")
-    {
-        const std::string body_content = "{\"status\":\"online\"}";
-        std::string raw_response =
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: application/json\r\n"
-            "Content-Length: " +
-            std::to_string(body_content.size()) + "\r\n"
-                                                  "\r\n" +
-            body_content;
-
-        http::response_parser<http::string_body> parser;
-        parser.eager(true);
-        boost::beast::error_code ec;
-
-        parser.put(asio::buffer(raw_response), ec);
-
-        REQUIRE_FALSE(ec);
-        REQUIRE(parser.is_done());
-
-        auto res = parser.get();
         CHECK(res.result() == http::status::ok);
         CHECK(res[http::field::content_type] == "application/json");
-        CHECK(res.body() == "{\"status\":\"online\"}");
+
+        auto body_json = json::parse(res.body());
+        CHECK(body_json["host"] == "127.0.0.1");
+        CHECK(body_json["port"] == 8080);
+        CHECK(body_json["active"] == true);
     }
 
-    SECTION("Bozuk HTTP yanitinda guvenli hata kodu uretilmeli")
+    SECTION("POST /api/config gecerli JSON ile state guncellemeli ve 200 OK donmeli")
     {
-        std::string corrupted_response = "NOT_A_VALID_HTTP_PACKET\r\n\r\n";
+        http::request<http::string_body> req{http::verb::post, "/api/config", 11};
+        req.body() = R"({"host":"192.168.1.50","port":9090,"active":false})";
+        req.prepare_payload();
 
-        http::response_parser<http::string_body> parser;
-        boost::beast::error_code ec;
+        auto res = backend::handle_http_request(std::move(req), state);
 
-        parser.put(asio::buffer(corrupted_response), ec);
+        CHECK(res.result() == http::status::ok);
 
-        CHECK(ec);
-        CHECK_FALSE(parser.is_done());
+        auto body_json = json::parse(res.body());
+        CHECK(body_json["status"] == "success");
+
+        std::lock_guard<std::mutex> lock(state->mtx);
+        CHECK(state->config.host == "192.168.1.50");
+        CHECK(state->config.port == 9090);
+        CHECK(state->config.active == false);
+    }
+
+    SECTION("POST /api/config gecersiz JSON verildiginde 400 Bad Request donmeli")
+    {
+        http::request<http::string_body> req{http::verb::post, "/api/config", 11};
+        req.body() = "{ bozuk_json: true ";
+        req.prepare_payload();
+
+        auto res = backend::handle_http_request(std::move(req), state);
+
+        CHECK(res.result() == http::status::bad_request);
+
+        auto body_json = json::parse(res.body());
+        CHECK(body_json["status"] == "error");
+    }
+
+    SECTION("DELETE /api/config yapilandirmayi pasife cekmeli ve 200 OK donmeli")
+    {
+        http::request<http::string_body> req{http::verb::delete_, "/api/config", 11};
+        auto res = backend::handle_http_request(std::move(req), state);
+
+        CHECK(res.result() == http::status::ok);
+
+        std::lock_guard<std::mutex> lock(state->mtx);
+        CHECK(state->config.active == false);
+    }
+
+    SECTION("Desteklenmeyen HTTP metodunda 405 Method Not Allowed donmeli")
+    {
+        http::request<http::string_body> req{http::verb::put, "/api/config", 11};
+        auto res = backend::handle_http_request(std::move(req), state);
+
+        CHECK(res.result() == http::status::method_not_allowed);
+    }
+
+    SECTION("Bilinmeyen endpoint durumunda 404 Not Found donmeli")
+    {
+        http::request<http::string_body> req{http::verb::get, "/api/tanimsiz_servis", 11};
+        auto res = backend::handle_http_request(std::move(req), state);
+
+        CHECK(res.result() == http::status::not_found);
     }
 }
 

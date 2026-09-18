@@ -1,6 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
-#include "json_service.hpp"
-#include <limits>
+#include "services/json_service.hpp"
 
 TEST_CASE("JsonService serilestirme ve ayristirma dogrulamasi", "[json]")
 {
@@ -17,6 +16,19 @@ TEST_CASE("JsonService serilestirme ve ayristirma dogrulamasi", "[json]")
         CHECK(parsed->host == "localhost");
         CHECK(parsed->port == 9000);
         CHECK(parsed->active == true);
+    }
+
+    SECTION("Turkce karakter ve JSON kacis sembolleri dogru ayristirilmali")
+    {
+        std::string_view unicode_json = R"({
+            "host": "sunucu-öçşığü.yerel",
+            "port": 8080,
+            "active": true
+        })";
+
+        auto parsed = service.deserialize(unicode_json);
+        REQUIRE(parsed.has_value());
+        CHECK(parsed->host == "sunucu-öçşığü.yerel");
     }
 
     SECTION("Bozuk JSON syntax durumunda std::nullopt donmeli")
