@@ -66,8 +66,14 @@ int main(int argc, char *argv[])
 
     if (server_cmd->parsed())
     {
-        AppLog::info("Sunucu modu baslatiliyor...");
+        AppLog::info("Sunucu baslatiliyor -> Dinlenen Adres: " + server_ip + ":" +
+                     std::to_string(server_port) + " (HTTP API + WebSocket)...");
+
         backend::CloudServer server(server_ip, server_port);
+
+        AppLog::info("Sunucu yapilandirildi, dinleme dongusu baslatiliyor (Dinlenen: " + server_ip + ":" +
+                     std::to_string(server_port) + "). Cikmak icin Ctrl+C kullanabilirsiniz.");
+
         server.run();
     }
     else if (client_cmd->parsed())

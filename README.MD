@@ -88,6 +88,33 @@ Windows ortamında yapılandırma, derleme, test ve çalıştırma adımlarını
 >
 > **Not:** `-Server` veya `-Client` ile çağrıldığında, `main_app.exe` zaten build edilmişse betik **otomatik olarak** hiçbir configure/build/test adımına dokunmaz ve doğrudan çalıştırır — bu sayede örneğin sunucu açıkken başka bir pencerede istemciyi başlatmak, çalışan sunucuyu kapatmaz. Exe henüz yoksa otomatik olarak önce build alınır. Zorla yeniden build almak için `-Rebuild`, build'e kesinlikle dokunmamak (exe yoksa hata verir) için `-SkipBuild` kullanılır.
 
+### 2.1 Oda Yönetimi (REST API) Komutları
+
+`build.ps1`, çalışan bir sunucudaki sohbet odalarını derleme/çalıştırma adımlarına hiç dokunmadan doğrudan REST API üzerinden yönetmek için ek parametreler sunar. Bu parametrelerden biri verildiğinde betik **yalnızca** ilgili API isteğini atar ve çıkar (build/run mantığına girmez):
+
+```powershell
+# Sunucudaki tüm odaları listele (varsayılan hedef: 127.0.0.1:8080)
+.\build.ps1 -ListRooms
+
+# Farklı bir sunucu/port üzerindeki odaları listele
+.\build.ps1 -ListRooms -Target 192.168.1.20 -Port 8080
+
+# Yeni bir oda oluştur
+.\build.ps1 -CreateRoom "Genel Sohbet"
+
+# Bir odayı kapat (yeni bağlantılara kapatır, ID veya oda adı ile)
+.\build.ps1 -CloseRoom "Genel Sohbet"
+.\build.ps1 -CloseRoom 3
+
+# Kapalı bir odayı yeniden aç
+.\build.ps1 -OpenRoom 3
+
+# Bir odayı ve tüm mesaj geçmişini kalıcı olarak sil
+.\build.ps1 -DeleteRoom 3
+```
+
+> **Not:** `-CloseRoom` / `-OpenRoom` / `-DeleteRoom` parametrelerine sayısal bir oda ID'si veya oda adı (string) verilebilir; isim verildiğinde betik önce `GET /api/rooms` ile ID'yi otomatik çözümler. Bu komutlar sunucuya HTTP isteği attığı için **hedef sunucunun çalışıyor olması** gerekir; `-Target`/`-Port` ile farklı bir sunucu hedeflenebilir. Oda işlemlerinin sunucu tarafı (`GET/POST/PUT/DELETE /api/rooms`) backend kodunda (`http_handler.cpp`) karşılanmalıdır.
+
 ---
 
 ## 3. Manuel Yapılandırma ve Derleme (CMake)
@@ -254,6 +281,40 @@ curl -X POST [http://127.0.0.1:8080/api/config](http://127.0.0.1:8080/api/config
 
 # Ayarları Sıfırla (DELETE)
 curl -X DELETE [http://127.0.0.1:8080/api/config](http://127.0.0.1:8080/api/config)
+```
+
+### Oda Yönetimi (`/api/rooms`)
+
+`build.ps1 -ListRooms / -CreateRoom / -CloseRoom / -OpenRoom / -DeleteRoom` komutları perde arkasında bu uç noktaları kullanır:
+
+**Windows (PowerShell)**
+```powershell
+# Odaları Listele (GET)
+curl.exe [http://127.0.0.1:8080/api/rooms](http://127.0.0.1:8080/api/rooms)
+
+# Yeni Oda Olustur (POST)
+curl.exe -X POST [http://127.0.0.1:8080/api/rooms](http://127.0.0.1:8080/api/rooms) -H "Content-Type: application/json" -d "{\"name\":\"Genel Sohbet\"}"
+
+# Odayi Kapat/Ac (PUT)
+curl.exe -X PUT [http://127.0.0.1:8080/api/rooms/3](http://127.0.0.1:8080/api/rooms/3) -H "Content-Type: application/json" -d "{\"is_open\":false}"
+
+# Odayi Sil (DELETE)
+curl.exe -X DELETE [http://127.0.0.1:8080/api/rooms/3](http://127.0.0.1:8080/api/rooms/3)
+```
+
+**Linux (Bash)**
+```bash
+# Odalari Listele (GET)
+curl [http://127.0.0.1:8080/api/rooms](http://127.0.0.1:8080/api/rooms)
+
+# Yeni Oda Olustur (POST)
+curl -X POST [http://127.0.0.1:8080/api/rooms](http://127.0.0.1:8080/api/rooms) -H "Content-Type: application/json" -d '{"name":"Genel Sohbet"}'
+
+# Odayi Kapat/Ac (PUT)
+curl -X PUT [http://127.0.0.1:8080/api/rooms/3](http://127.0.0.1:8080/api/rooms/3) -H "Content-Type: application/json" -d '{"is_open":false}'
+
+# Odayi Sil (DELETE)
+curl -X DELETE [http://127.0.0.1:8080/api/rooms/3](http://127.0.0.1:8080/api/rooms/3)
 ```
 
 ---

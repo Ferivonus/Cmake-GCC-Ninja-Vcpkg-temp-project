@@ -26,26 +26,53 @@ namespace backend
         try
         {
             beast::tcp_stream stream(std::move(socket));
-            beast::flat_buffer buffer;
 
-            http::request<http::string_body> req;
-            http::read(stream, buffer, req);
-
-            if (websocket::is_upgrade(req))
+            for (;;)
             {
-                handle_websocket_session(std::move(stream), std::move(req), state_);
-                return;
+                beast::flat_buffer buffer;
+                http::request<http::string_body> req;
+
+                beast::error_code ec;
+                http::read(stream, buffer, req, ec);
+
+                if (ec == http::error::end_of_stream)
+                {
+                    break; // Client baglantiyi duzgunce kapatti
+                }
+                if (ec)
+                {
+                    throw beast::system_error{ec};
+                }
+
+                if (websocket::is_upgrade(req))
+                {
+                    handle_websocket_session(std::move(stream), std::move(req), state_);
+                    return; // WS oturumu kendi dongusunu yonetir, HTTP dongusune geri donulmez
+                }
+
+                AppLog::info("HTTP " + std::string(req.method_string()) + " " + std::string(req.target()));
+
+                const bool keep_alive = req.keep_alive();
+                auto res = handle_http_request(std::move(req), state_);
+
+                http::write(stream, res, ec);
+                if (ec)
+                {
+                    throw beast::system_error{ec};
+                }
+
+                if (!keep_alive)
+                {
+                    break;
+                }
             }
 
-            auto res = handle_http_request(std::move(req), state_);
-            http::write(stream, res);
-
-            beast::error_code ec;
-            stream.socket().shutdown(tcp::socket::shutdown_send, ec);
+            beast::error_code shutdown_ec;
+            stream.socket().shutdown(tcp::socket::shutdown_send, shutdown_ec);
         }
         catch (const beast::system_error &se)
         {
-            if (se.code() != websocket::error::closed)
+            if (se.code() != websocket::error::closed && se.code() != http::error::end_of_stream)
             {
                 AppLog::error("Soket istisnasi: " + std::string(se.what()));
             }
@@ -82,6 +109,13 @@ namespace backend
             {
                 tcp::socket socket{ioc};
                 acceptor.accept(socket);
+
+                boost::system::error_code ep_ec;
+                const auto remote_ep = socket.remote_endpoint(ep_ec);
+                const std::string remote_str = ep_ec
+                                                   ? "bilinmeyen"
+                                                   : (remote_ep.address().to_string() + ":" + std::to_string(remote_ep.port()));
+                AppLog::info("Yeni baglanti kabul edildi <- " + remote_str);
 
                 std::thread([this, s = std::move(socket)]() mutable
                             { this->handle_session(std::move(s)); })

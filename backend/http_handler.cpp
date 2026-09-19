@@ -130,6 +130,9 @@ namespace backend
                                                    {"is_open", true},
                                                    {"created_at", ts}})
                                                  .dump();
+
+                                AppLog::info("[API] Yeni oda olusturuldu: '" + name + "' (ID: #" +
+                                             std::to_string(room_id) + ")");
                             }
                             else
                             {
@@ -292,6 +295,15 @@ namespace backend
                                     {"room_id", room_id},
                                     {"message", "Bu oda sunucu tarafindan kapatilmistir."}};
                                 state->broadcast_to_room(room_id, close_evt.dump());
+                                AppLog::info("[API] Oda kapatildi: '" + new_name + "' (ID: #" + std::to_string(room_id) + ")");
+                            }
+                            else if (new_open && !current->is_open)
+                            {
+                                AppLog::info("[API] Oda yeniden acildi: '" + new_name + "' (ID: #" + std::to_string(room_id) + ")");
+                            }
+                            else
+                            {
+                                AppLog::info("[API] Oda guncellendi: '" + new_name + "' (ID: #" + std::to_string(room_id) + ")");
                             }
 
                             res.body() = json({{"status", "success"},
@@ -325,6 +337,8 @@ namespace backend
                         {"message", "Oda silinmistir."}};
                     state->broadcast_to_room(room_id, del_evt.dump());
                     state->evict_from_room(room_id);
+
+                    AppLog::info("[API] Oda silindi (ID: #" + std::to_string(room_id) + ")");
 
                     res.body() = json({{"status", "success"}, {"message", "Oda ve tum mesajlari silindi"}}).dump();
                 }

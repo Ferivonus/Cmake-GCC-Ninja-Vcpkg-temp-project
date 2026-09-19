@@ -1,4 +1,4 @@
-#include "client/ws_client.hpp"
+#include "ws_client.hpp"
 #include "config/app_config.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>

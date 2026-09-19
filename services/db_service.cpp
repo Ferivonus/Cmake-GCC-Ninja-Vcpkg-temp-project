@@ -1,6 +1,7 @@
 // db_service.cpp
-#include "services/db_service.hpp"
+#include "db_service.hpp"
 #include "config/app_config.hpp"
+#include <algorithm>
 
 namespace backend
 {
@@ -58,6 +59,8 @@ namespace backend
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (room_id) REFERENCES rooms(id) ON DELETE CASCADE
             );
+
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_room_id ON chat_messages(room_id);
         )";
 
         char *err_msg = nullptr;
@@ -263,7 +266,7 @@ namespace backend
         if (!db_)
             return messages;
 
-        const char *sql = "SELECT id, room_id, username, message, created_at FROM chat_messages WHERE room_id = ? ORDER BY id ASC LIMIT ?;";
+        const char *sql = "SELECT id, room_id, username, message, created_at FROM chat_messages WHERE room_id = ? ORDER BY id DESC LIMIT ?;";
         sqlite3_stmt *stmt = nullptr;
 
         if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK)
@@ -283,6 +286,8 @@ namespace backend
             messages.push_back(std::move(m));
         }
         sqlite3_finalize(stmt);
+
+        std::reverse(messages.begin(), messages.end());
         return messages;
     }
 }

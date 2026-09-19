@@ -1,4 +1,4 @@
-#include "backend/ws_handler.hpp"
+#include "ws_handler.hpp"
 #include "config/app_config.hpp"
 #include <boost/asio/buffer.hpp>
 #include <nlohmann/json.hpp>
@@ -32,11 +32,22 @@ namespace backend
         std::shared_ptr<ServerState> state)
     {
         std::shared_ptr<WsSession> session;
+
+        std::string remote_str = "bilinmeyen";
+        {
+            boost::system::error_code ep_ec;
+            const auto remote_ep = stream.socket().remote_endpoint(ep_ec);
+            if (!ep_ec)
+            {
+                remote_str = remote_ep.address().to_string() + ":" + std::to_string(remote_ep.port());
+            }
+        }
+
         try
         {
             websocket::stream<beast::tcp_stream> ws(std::move(stream));
             ws.accept(req);
-            AppLog::info("WebSocket baglantisi acildi: " + std::string(req.target()));
+            AppLog::info("WebSocket baglantisi acildi (" + remote_str + "): " + std::string(req.target()));
 
             session = std::make_shared<WsSession>(std::move(ws));
             state->add_session(session);
@@ -115,6 +126,9 @@ namespace backend
                             {"username", user},
                             {"timestamp", get_current_timestamp()}};
                         state->broadcast_to_room(target_room, broadcast_join.dump());
+
+                        AppLog::info("[Oda #" + std::to_string(target_room) + "] '" + user +
+                                     "' katildi (" + remote_str + ").");
                     }
                     // 2. Odadan ayrılma
                     else if (action == "leave")
@@ -132,14 +146,15 @@ namespace backend
                                 {"username", session->get_username()},
                                 {"timestamp", get_current_timestamp()}};
                             state->broadcast_to_room(prev_room, broadcast_leave.dump());
+
+                            AppLog::info("[Oda #" + std::to_string(prev_room) + "] '" +
+                                         session->get_username() + "' ayrildi (" + remote_str + ").");
                         }
                     }
                     // 3. Mesaj iletimi
                     else if (action == "message")
                     {
-                        int64_t target_room = (data.contains("room_id") && data["room_id"].is_number_integer())
-                                                  ? data["room_id"].get<int64_t>()
-                                                  : session->get_room_id();
+                        int64_t target_room = session->get_room_id();
 
                         if (target_room <= 0)
                         {
@@ -153,10 +168,9 @@ namespace backend
                             continue;
                         }
 
-                        if (data.contains("username") && data.contains("message") &&
-                            data["username"].is_string() && data["message"].is_string())
+                        if (data.contains("message") && data["message"].is_string())
                         {
-                            std::string user = data["username"].get<std::string>();
+                            std::string user = session->get_username();
                             std::string msg = data["message"].get<std::string>();
                             std::string timestamp = get_current_timestamp();
 
@@ -171,10 +185,13 @@ namespace backend
                                 {"timestamp", timestamp}};
 
                             state->broadcast_to_room(target_room, broadcast_json.dump());
+
+                            const std::string preview = (msg.size() > 80) ? (msg.substr(0, 80) + "...") : msg;
+                            AppLog::info("[Oda #" + std::to_string(target_room) + "] " + user + ": " + preview);
                         }
                         else
                         {
-                            session->send(R"({"type":"error","message":"'username' ve 'message' string olmalidir"})");
+                            session->send(R"({"type":"error","message":"'message' alani string olmalidir"})");
                         }
                     }
                     else
@@ -212,10 +229,14 @@ namespace backend
                     {"username", session->get_username()},
                     {"timestamp", get_current_timestamp()}};
                 state->broadcast_to_room(r_id, disc_evt.dump());
+
+                AppLog::info("[Oda #" + std::to_string(r_id) + "] '" + session->get_username() +
+                             "' baglantisini kaybetti (" + remote_str + ").");
             }
 
             state->remove_session(session);
-            AppLog::info("WebSocket oturumu kapandi ve havuzdan cikarildi.");
+            AppLog::info("WebSocket oturumu kapandi (" + remote_str + ", kullanici: " +
+                         session->get_username() + ") ve havuzdan cikarildi.");
         }
     }
 }

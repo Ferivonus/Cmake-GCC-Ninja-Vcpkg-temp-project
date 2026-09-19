@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30) # cxx_std_26 meta-ozelligi fiilen ancak 3.30+ ile derleyici bayragini ekliyor
+cmake_minimum_required(VERSION 3.30)
 project(TemplateApp LANGUAGES C CXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -21,16 +21,19 @@ find_package(boost_beast REQUIRED CONFIG)
 find_package(SQLite3 REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
 
+# 1. Json Service
 add_library(json_service STATIC services/json_service.cpp)
 target_compile_features(json_service PRIVATE cxx_std_17)
-target_include_directories(json_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/services)
+target_include_directories(json_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(json_service PRIVATE nlohmann_json::nlohmann_json)
 
+# 2. App Config
 add_library(app_config STATIC config/app_config.cpp)
 target_compile_features(app_config PRIVATE cxx_std_17)
-target_include_directories(app_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/config)
+target_include_directories(app_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(app_config PRIVATE spdlog::spdlog)
 
+# 3. Backend Service
 add_library(backend_service STATIC 
     services/db_service.cpp
     backend/backend.cpp
@@ -50,6 +53,7 @@ target_link_libraries(backend_service PUBLIC
     $<$<PLATFORM_ID:Windows>:mswsock>
 )
 
+# 4. Client Service
 add_library(client_service STATIC
     client/ws_client.cpp
 )
@@ -65,6 +69,7 @@ target_link_libraries(client_service PUBLIC
     $<$<PLATFORM_ID:Windows>:mswsock>
 )
 
+# 5. Main Uygulama
 add_executable(main_app main.cpp)
 target_compile_features(main_app PRIVATE cxx_std_26)
 target_compile_options(main_app PRIVATE 
@@ -73,12 +78,14 @@ target_compile_options(main_app PRIVATE
 target_link_options(main_app PRIVATE
     $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU>>:-s>
 )
+target_include_directories(main_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(main_app PRIVATE 
     backend_service
     client_service
     CLI11::CLI11
 )
 
+# 6. Birim Testleri
 enable_testing()
 add_executable(unit_tests 
     tests/test_json.cpp
@@ -89,6 +96,7 @@ target_compile_features(unit_tests PRIVATE cxx_std_26)
 target_compile_options(unit_tests PRIVATE 
     $<$<CXX_COMPILER_ID:GNU>:-Wall -Wextra -Wpedantic>
 )
+target_include_directories(unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(unit_tests PRIVATE 
     backend_service
     Catch2::Catch2WithMain
