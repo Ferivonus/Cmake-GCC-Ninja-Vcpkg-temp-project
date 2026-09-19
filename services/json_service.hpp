@@ -1,3 +1,4 @@
+// json_service.hpp
 #pragma once
 #include <memory>
 #include <optional>
@@ -24,7 +25,7 @@ public:
     JsonService &operator=(const JsonService &) = delete;
 
     [[nodiscard]] std::string serialize(const AppConfig &cfg) const;
-    [[nodiscard]] std::optional<AppConfig> deserialize(std::string_view raw_json) const;
+    [[nodiscard]] std::optional<AppConfig> deserialize(std::string_view raw_json) const noexcept;
 
 private:
     struct Impl;

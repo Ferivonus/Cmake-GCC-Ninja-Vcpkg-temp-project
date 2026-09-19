@@ -10,6 +10,7 @@
 #include <thread>
 #include <atomic>
 #include <vector>
+#include <sstream>
 
 namespace client
 {
@@ -20,9 +21,11 @@ namespace client
     using json = nlohmann::json;
 
     WsClient::WsClient(std::string host, unsigned short port, std::string username,
-                       bool use_tor, std::string proxy_host, unsigned short proxy_port)
+                       int64_t initial_room_id, bool use_tor,
+                       std::string proxy_host, unsigned short proxy_port)
         : host_(std::move(host)), port_(port), username_(std::move(username)),
-          use_tor_(use_tor), proxy_host_(std::move(proxy_host)), proxy_port_(proxy_port)
+          current_room_id_(initial_room_id), use_tor_(use_tor),
+          proxy_host_(std::move(proxy_host)), proxy_port_(proxy_port)
     {
         if (host_.find(".onion") != std::string::npos)
         {
@@ -34,7 +37,7 @@ namespace client
     {
         boost::system::error_code ec;
 
-        // 1. SOCKS5 Tanitimi
+        // 1. SOCKS5 Metot Anlaşması (No Auth)
         const uint8_t greeting[] = {0x05, 0x01, 0x00};
         asio::write(socket, asio::buffer(greeting), ec);
         if (ec)
@@ -48,15 +51,16 @@ namespace client
             return false;
         }
 
-        // 2. Baglanti Istegi: ATYP=0x03 ile DNS sizintisi onlenir
+        // 2. CONNECT Talebi: DNS sızıntısını önlemek için ATYP=0x03 (Domain Adı)
         std::vector<uint8_t> req;
-        req.push_back(0x05);                                      // VER
-        req.push_back(0x01);                                      // CMD (CONNECT)
-        req.push_back(0x00);                                      // RSV
-        req.push_back(0x03);                                      // ATYP (Domain name)
-        req.push_back(static_cast<uint8_t>(host_.size()));        // Domain uzunlugu
-        req.insert(req.end(), host_.begin(), host_.end());        // Domain degeri
-        req.push_back(static_cast<uint8_t>((port_ >> 8) & 0xFF)); // Port (Big-endian)
+        req.reserve(7 + host_.size());
+        req.push_back(0x05);
+        req.push_back(0x01);
+        req.push_back(0x00);
+        req.push_back(0x03);
+        req.push_back(static_cast<uint8_t>(host_.size()));
+        req.insert(req.end(), host_.begin(), host_.end());
+        req.push_back(static_cast<uint8_t>((port_ >> 8) & 0xFF));
         req.push_back(static_cast<uint8_t>(port_ & 0xFF));
 
         asio::write(socket, asio::buffer(req), ec);
@@ -67,10 +71,11 @@ namespace client
         asio::read(socket, asio::buffer(resp_header), ec);
         if (ec || resp_header[1] != 0x00)
         {
-            AppLog::error("Tor vekili hedef sunucuya baglanamadi (Hata kodu: " + std::to_string(resp_header[1]) + ")");
+            AppLog::error("Tor vekili hedef sunucuya baglanamadi (Durum kodu: " + std::to_string(resp_header[1]) + ")");
             return false;
         }
 
+        // Kalan vekil yanıt baytlarını tüket
         if (resp_header[3] == 0x01)
         {
             uint8_t dummy[6];
@@ -106,34 +111,50 @@ namespace client
                 auto const proxy_endpoints = resolver.resolve(proxy_host_, std::to_string(proxy_port_));
                 beast::get_lowest_layer(ws).connect(proxy_endpoints);
 
-                AppLog::info("Tor uzerinden hedef rota kuruluyor -> " + host_ + ":" + std::to_string(port_));
+                AppLog::info("Tor tüneli kuruluyor -> " + host_ + ":" + std::to_string(port_));
                 if (!perform_socks5_handshake(beast::get_lowest_layer(ws).socket()))
                 {
-                    AppLog::error("Tor SOCKS5 baglantisi basarisiz oldu. Tor servisinin calistigindan emin olun.");
+                    AppLog::error("Tor devre kurulumu basarisiz oldu.");
                     return;
                 }
                 AppLog::info("Tor devresi kuruldu.");
             }
             else
             {
-                AppLog::info("Dogrudan baglanti kuruluyor -> " + host_ + ":" + std::to_string(port_));
+                AppLog::info("Baglanti kuruluyor -> " + host_ + ":" + std::to_string(port_));
                 auto const results = resolver.resolve(host_, std::to_string(port_));
                 beast::get_lowest_layer(ws).connect(results);
             }
 
-            std::string host_header = host_ + ":" + std::to_string(port_);
+            const std::string host_header = host_ + ":" + std::to_string(port_);
             ws.handshake(host_header, "/ws");
-            AppLog::info("WebSocket baglantisi kuruldu. Kullanici: " + username_);
+            AppLog::info("WebSocket baglantisi aktif. Oturum: " + username_);
 
-            std::cout << "\n=== CANLI CHAT BASLADI (" << (use_tor_ ? "TOR AKTIF" : "DOGRADAN") << ") (Cikmak icin 'exit' yazin) ===\n";
+            // Başlangıç odasına otomatik giriş
+            const int64_t init_room = current_room_id_.load(std::memory_order_relaxed);
+            if (init_room > 0)
+            {
+                json join_req = {
+                    {"action", "join"},
+                    {"room_id", init_room},
+                    {"username", username_}};
+                ws.text(true);
+                ws.write(asio::buffer(join_req.dump()));
+            }
+
+            std::cout << "\n=======================================================\n"
+                      << " CANLI CHAT OTURUMU (" << (use_tor_ ? "TOR VEKILI" : "DOGRADAN TCP") << ")\n"
+                      << " Komutlar: /join <id>, /leave, /room, /help, exit\n"
+                      << "=======================================================\n\n";
 
             std::atomic<bool> is_running{true};
 
+            // Eşzamanlı Dinleyici İş Parçacığı (Reader Thread)
             std::thread reader_thread([&]()
                                       {
                 try
                 {
-                    while (is_running)
+                    while (is_running.load(std::memory_order_relaxed))
                     {
                         beast::flat_buffer buffer;
                         boost::system::error_code ec;
@@ -141,34 +162,84 @@ namespace client
 
                         if (ec)
                         {
-                            if (is_running)
+                            if (is_running.load(std::memory_order_relaxed))
                             {
-                                std::cout << "\n[Bilgi] Sunucu baglantisi kapandi.\n";
+                                std::cout << "\n[Sistem] Sunucu baglantisi kapandi (" << ec.message() << ").\n";
                             }
                             break;
                         }
 
-                        std::string incoming = beast::buffers_to_string(buffer.data());
+                        const std::string incoming = beast::buffers_to_string(buffer.data());
                         try
                         {
-                            auto res_json = json::parse(incoming);
-                            std::string type = res_json.value("type", "");
+                            const auto res_json = json::parse(incoming);
+                            if (!res_json.is_object())
+                                continue;
+
+                            const std::string type = res_json.value("type", "");
 
                             if (type == "chat_message")
                             {
-                                std::string user = res_json.value("username", "Anonim");
-                                std::string msg = res_json.value("message", "");
-                                std::string time_str = res_json.value("timestamp", "--:--:--");
+                                const std::string user = res_json.value("username", "Anonim");
+                                const std::string msg = res_json.value("message", "");
+                                const std::string time_str = res_json.value("timestamp", "--:--:--");
+                                const int64_t r_id = res_json.value("room_id", int64_t{0});
 
                                 if (user != username_)
                                 {
-                                    std::cout << "\r[" << time_str << "] [" << user << "]: " << msg << "\n"
-                                              << username_ << " > " << std::flush;
+                                    std::cout << "\r[" << time_str << "] [Oda #" << r_id << "] "
+                                              << user << ": " << msg << "\n> " << std::flush;
                                 }
                             }
+                            else if (type == "joined_room")
+                            {
+                                const int64_t r_id = res_json.value("room_id", int64_t{-1});
+                                const std::string r_name = res_json.value("room_name", "");
+                                current_room_id_.store(r_id, std::memory_order_release);
+
+                                std::cout << "\r[Sistem] Odaya gecildi: '" << r_name << "' (ID: #" << r_id << ")\n> " << std::flush;
+                            }
+                            else if (type == "left_room")
+                            {
+                                current_room_id_.store(-1, std::memory_order_release);
+                                std::cout << "\r[Sistem] Odadan cikildi. Su an bosta bekliyorsunuz.\n> " << std::flush;
+                            }
+                            else if (type == "system")
+                            {
+                                const std::string event = res_json.value("event", "");
+                                const std::string user = res_json.value("username", "");
+                                const int64_t r_id = res_json.value("room_id", int64_t{0});
+
+                                if (event == "user_joined" && user != username_)
+                                {
+                                    std::cout << "\r[Sistem] " << user << " odaya (#" << r_id << ") katildi.\n> " << std::flush;
+                                }
+                                else if (event == "user_left" && user != username_)
+                                {
+                                    std::cout << "\r[Sistem] " << user << " odadan (#" << r_id << ") ayrildi.\n> " << std::flush;
+                                }
+                                else if (event == "user_disconnected")
+                                {
+                                    std::cout << "\r[Sistem] " << user << " baglantisini kaybetti.\n> " << std::flush;
+                                }
+                                else if (event == "room_closed")
+                                {
+                                    std::cout << "\r[Uyari] Bulundugunuz oda kapatilmistir! Mesaj gonderilemez.\n> " << std::flush;
+                                }
+                                else if (event == "room_deleted")
+                                {
+                                    current_room_id_.store(-1, std::memory_order_release);
+                                    std::cout << "\r[Uyari] Bulundugunuz oda silindi! Bosta durumundasiniz.\n> " << std::flush;
+                                }
+                            }
+                            else if (type == "error")
+                            {
+                                std::cout << "\r[Hata] " << res_json.value("message", "Bilinmeyen hata") << "\n> " << std::flush;
+                            }
                         }
-                        catch (...)
+                        catch (const json::exception &)
                         {
+                            // Bozuk JSON paketlerini yut
                         }
                     }
                 }
@@ -176,22 +247,95 @@ namespace client
                 {
                 } });
 
+            // Ana İstemci Giriş Döngüsü
             std::string line;
-            while (is_running)
+            while (is_running.load(std::memory_order_relaxed))
             {
-                std::cout << username_ << " > " << std::flush;
-                if (!std::getline(std::cin, line) || line == "exit" || line == "quit")
+                std::cout << "> " << std::flush;
+                if (!std::getline(std::cin, line))
                 {
-                    is_running = false;
+                    is_running.store(false, std::memory_order_release);
                     break;
                 }
 
                 if (line.empty())
+                    continue;
+
+                if (line == "exit" || line == "quit")
                 {
+                    is_running.store(false, std::memory_order_release);
+                    break;
+                }
+
+                // Komut İşleme Bloğu
+                if (line[0] == '/')
+                {
+                    std::istringstream iss(line);
+                    std::string cmd;
+                    iss >> cmd;
+
+                    if (cmd == "/join")
+                    {
+                        int64_t target_room = 0;
+                        if (iss >> target_room && target_room > 0)
+                        {
+                            json join_msg = {
+                                {"action", "join"},
+                                {"room_id", target_room},
+                                {"username", username_}};
+                            boost::system::error_code ec;
+                            ws.write(asio::buffer(join_msg.dump()), ec);
+                            if (ec)
+                                break;
+                        }
+                        else
+                        {
+                            std::cout << "[Kullanim] /join <oda_id> (Orn: /join 2)\n";
+                        }
+                    }
+                    else if (cmd == "/leave")
+                    {
+                        json leave_msg = {{"action", "leave"}};
+                        boost::system::error_code ec;
+                        ws.write(asio::buffer(leave_msg.dump()), ec);
+                        if (ec)
+                            break;
+                    }
+                    else if (cmd == "/room")
+                    {
+                        const int64_t current = current_room_id_.load(std::memory_order_relaxed);
+                        if (current > 0)
+                            std::cout << "[Durum] Bagli bulunulan oda: #" << current << "\n";
+                        else
+                            std::cout << "[Durum] Herhangi bir odaya bagli degilsiniz.\n";
+                    }
+                    else if (cmd == "/help")
+                    {
+                        std::cout << "Kullanilabilir komutlar:\n"
+                                  << "  /join <id>  : Belirtilen odaya gecis yapar\n"
+                                  << "  /leave      : Odadan ayrilarak bosta moda gecer\n"
+                                  << "  /room       : Mevcut oda bilgisini gosterir\n"
+                                  << "  /help       : Bu yardim menusunu basar\n"
+                                  << "  exit, quit  : Programi guvenle sonlandirir\n";
+                    }
+                    else
+                    {
+                        std::cout << "[Hata] Gecersiz komut. Desteklenen komutlar icin /help yaziniz.\n";
+                    }
+                    continue;
+                }
+
+                // Normal Mesaj Gönderimi
+                const int64_t active_room = current_room_id_.load(std::memory_order_relaxed);
+                if (active_room <= 0)
+                {
+                    std::cout << "[Uyari] Mesaj iletmek icin bir odaya girmelisiniz: /join <id>\n";
                     continue;
                 }
 
                 json req_payload = {
+                    {"action", "message"},
+                    {"room_id", active_room},
                     {"username", username_},
                     {"message", line}};
 
@@ -200,14 +344,17 @@ namespace client
                 ws.write(asio::buffer(req_payload.dump()), ec);
                 if (ec)
                 {
-                    AppLog::error("Mesaj iletilemedi: " + ec.message());
+                    AppLog::error("Ileti transfer hatasi: " + ec.message());
                     break;
                 }
             }
 
-            is_running = false;
+            is_running.store(false, std::memory_order_release);
 
+            // Soket Bağlantısını Güvenle Kapatma (Graceful WS Close Handshake)
             boost::system::error_code ec;
+            ws.close(websocket::close_code::normal, ec);
+
             beast::get_lowest_layer(ws).socket().shutdown(tcp::socket::shutdown_both, ec);
 
             if (reader_thread.joinable())
@@ -216,12 +363,11 @@ namespace client
             }
 
             beast::get_lowest_layer(ws).socket().close(ec);
-
-            AppLog::info("Baglanti kapatildi.");
+            AppLog::info("Istemci soket oturumu guvenle kapatildi.");
         }
         catch (const std::exception &e)
         {
-            AppLog::error("Client hatasi: " + std::string(e.what()));
+            AppLog::error("Istemci calisma zamani hatasi: " + std::string(e.what()));
         }
     }
 }

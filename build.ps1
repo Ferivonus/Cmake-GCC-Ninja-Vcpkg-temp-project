@@ -26,6 +26,11 @@ param (
     [Alias("HostAddress")]
     [string]$Target = "127.0.0.1",
 
+    # Client'in baslangicta baglanacagi oda (ID veya Oda Adi)
+    [Parameter(ParameterSetName = "BuildAndRun")]
+    [Alias("RoomId", "RoomName")]
+    [string]$Room = "1",
+
     [Parameter(ParameterSetName = "BuildAndRun")]
     [string]$ProxyHost = "127.0.0.1",
 
@@ -73,13 +78,12 @@ else {
 }
 
 function Invoke-Step([string]$StepName, [scriptblock]$Action) {
-    Write-Host "`n>>> [$($Config.ToUpper())] $StepName..." -ForegroundColor Cyan
+    Write-Host "`n>>> [$($Config.ToUpper())]$StepName..." -ForegroundColor Cyan
     $Stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 
     & $Action
 
-    if ($LASTEXITCODE -ne 0) {
-        $Stopwatch.Stop()
+    if ($LASTEXITCODE -ne 0) {$Stopwatch.Stop()
         Write-Error "Hata: '$StepName' adimi basarisiz oldu. Exit Code: $LASTEXITCODE"
         exit $LASTEXITCODE
     }
@@ -90,8 +94,7 @@ function Invoke-Step([string]$StepName, [scriptblock]$Action) {
 
 # 0. Calisan Hedef Process Denetimi (LNK1104 / Permission Denied Korumasi)
 # Sadece gercekten build alinacaksa (yeniden derleme/temizlik) calisan main_app'i kapatiyoruz.
-# Sadece calistirma yapiliyorsa (exe zaten guncel) BURAYA HIC GIRILMEZ,
-# boylece ornegin server acikken ayri bir pencerede client baslatmak onu kapatmaz.
+# Sadece calistirma yapiliyorsa (exe zaten guncel) BURAYA HIC GIRILMEZ.
 if ($NeedsBuild) {
     Get-Process -Name "main_app" -ErrorAction SilentlyContinue | ForEach-Object {
         Write-Warning "Calisan main_app (PID: $($_.Id)) tespit edildi. Kilit cakismasini onlemek icin sonlandiriliyor."
@@ -117,7 +120,7 @@ if ($NeedsBuild) {
         cmake --preset $Preset
     }
 
-    # 3. Build (Ninja / GCC)
+    # 3. Build (Ninja / GCC / MSVC)
     Invoke-Step "Derleme ($Preset)" {
         cmake --build --preset $Preset
     }
@@ -145,25 +148,55 @@ else {
 
 # 5. Calistirma (Run)
 if ($Server) {
-    Write-Host "`n=== Sunucu Baslatiliyor (Dinlenen IP: $BindAddress, Port: $Port) ===" -ForegroundColor Green
-    & $ExePath "server" $Port.ToString() $BindAddress
+    Write-Host "`n=== Sunucu Baslatiliyor (Dinlenen IP: $BindAddress, Port:$Port) ===" -ForegroundColor Green
+    & $ExePath "server" $Port.ToString()$BindAddress
 }
 elseif ($Client -ne "") {
-    $ClientArgs = @("client", $Client, $Target, $Port.ToString())
+    # Oda Bilgisini Cozumle (Sayisal ID veya REST API uzerinden Oda Adi eslemesi)
+    $ResolvedRoomId = 1$parsedId = 0
 
-    # Tor gereksinimi: Explicit switch, .onion adresi veya belirtilen proxy parametreleri
-    $IsOnionAddress = $Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
-    $NeedsTor = $Tor -or $IsOnionAddress -or
-                $PSBoundParameters.ContainsKey('ProxyHost') -or $PSBoundParameters.ContainsKey('ProxyPort')
+    if ([int64]::TryParse($Room, [ref]$parsedId)) {
+        $ResolvedRoomId =$parsedId
+    }
+    else {
+        # Metinsel oda adi girildi, hedef acik agdaysa REST API ile ID cozumlenir
+        $IsOnionAddress =$Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
+        if (-not $IsOnionAddress -and -not$Tor) {
+            try {
+                $apiUrl = "http://${Target}:${Port}/api/rooms"
+                $resp = Invoke-RestMethod -Uri$apiUrl -Method Get -TimeoutSec 2 -ErrorAction Stop
+                $foundRoom =$resp.rooms | Where-Object { $_.name -ieq$Room } | Select-Object -First 1
 
-    if ($NeedsTor) {
-        $ClientArgs += @("--proxy-host", $ProxyHost, "--proxy-port", $ProxyPort.ToString())
-        if ($Tor -or $IsOnionAddress) {
-            $ClientArgs += "--tor"
+                if ($foundRoom) {
+                    $ResolvedRoomId = [int64]$foundRoom.id
+                    Write-Host ">>> Oda adi eslesmesi: '$Room' -> ID: #$ResolvedRoomId" -ForegroundColor Cyan
+                }
+                else {
+                    Write-Warning "Sunucuda '$Room' isimli oda bulunamadi! Varsayilan olarak #1 kullanilacak."
+                }
+            }
+            catch {
+                Write-Warning "Oda listesi REST API uzerinden alinamadi ($($_.Exception.Message)). Varsayilan #1 secildi."
+            }
+        }
+        else {
+            Write-Warning "Tor (.onion) uzerinden isim cozumleme desteklenmez. Sayisal oda ID'si gereklidir. Varsayilan #1 secildi."
         }
     }
 
-    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client | Hedef: ${Target}:${Port} | Tor: $NeedsTor) ===" -ForegroundColor Green
+    $ClientArgs = @("client", $Client,$Target, $Port.ToString(), "-r", $ResolvedRoomId.ToString())
+
+    # Tor gereksinimi: Explicit switch, .onion adresi veya belirtilen proxy parametreleri
+    $IsOnionAddress =$Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
+    $NeedsTor = $Tor -or$IsOnionAddress -or
+                $PSBoundParameters.ContainsKey('ProxyHost') -or$PSBoundParameters.ContainsKey('ProxyPort')
+
+    if ($NeedsTor) {$ClientArgs += @("--proxy-host", $ProxyHost, "--proxy-port", $ProxyPort.ToString())
+        if ($Tor -or $IsOnionAddress) {$ClientArgs += "--tor"
+        }
+    }
+
+    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client | Hedef: ${Target}:${Port} | Oda: #$ResolvedRoomId | Tor: $NeedsTor) ===" -ForegroundColor Green
     & $ExePath @ClientArgs
 }
 else {

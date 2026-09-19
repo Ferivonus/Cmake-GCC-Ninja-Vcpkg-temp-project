@@ -1,5 +1,7 @@
 #pragma once
 #include <string>
+#include <cstdint>
+#include <atomic>
 #include <boost/asio/ip/tcp.hpp>
 
 namespace client
@@ -8,6 +10,7 @@ namespace client
     {
     public:
         WsClient(std::string host, unsigned short port, std::string username,
+                 int64_t initial_room_id = 1,
                  bool use_tor = false,
                  std::string proxy_host = "127.0.0.1",
                  unsigned short proxy_port = 9050);
@@ -20,6 +23,7 @@ namespace client
         std::string host_;
         unsigned short port_;
         std::string username_;
+        std::atomic<int64_t> current_room_id_;
         bool use_tor_;
         std::string proxy_host_;
         unsigned short proxy_port_;

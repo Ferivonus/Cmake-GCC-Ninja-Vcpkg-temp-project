@@ -1,3 +1,4 @@
+// json_service.cpp
 #include "json_service.hpp"
 #include <nlohmann/json.hpp>
 
@@ -7,24 +8,29 @@ struct JsonService::Impl
 {
     std::string serialize(const AppConfig &cfg) const
     {
-        json j = {
+        const json j = {
             {"host", cfg.host},
             {"port", cfg.port},
             {"active", cfg.active}};
         return j.dump(2);
     }
 
-    std::optional<AppConfig> deserialize(std::string_view raw_json) const
+    std::optional<AppConfig> deserialize(std::string_view raw_json) const noexcept
     {
         try
         {
-            auto j = json::parse(raw_json);
+            const auto j = json::parse(raw_json);
+            if (!j.is_object() || !j.contains("host") || !j.contains("port") || !j.contains("active"))
+            {
+                return std::nullopt;
+            }
+
             return AppConfig{
                 j.at("host").get<std::string>(),
                 j.at("port").get<int>(),
                 j.at("active").get<bool>()};
         }
-        catch (const json::exception &)
+        catch (...)
         {
             return std::nullopt;
         }
@@ -42,7 +48,7 @@ std::string JsonService::serialize(const AppConfig &cfg) const
     return m_impl->serialize(cfg);
 }
 
-std::optional<AppConfig> JsonService::deserialize(std::string_view raw_json) const
+std::optional<AppConfig> JsonService::deserialize(std::string_view raw_json) const noexcept
 {
     return m_impl->deserialize(raw_json);
 }

@@ -71,8 +71,12 @@ namespace backend
             acceptor.listen();
 
             AppLog::info("Sunucu dinlemede -> http://" + address_str_ + ":" + std::to_string(port_));
-            AppLog::info("HTTP CRUD : /api/config (GET, POST, DELETE)");
-            AppLog::info("WebSocket : ws://" + address_str_ + ":" + std::to_string(port_) + "/ws");
+            AppLog::info("Health Check   : GET /health");
+            AppLog::info("Oda Yonetimi   : GET, POST /api/rooms");
+            AppLog::info("Oda CRUD       : GET, PUT, DELETE /api/rooms/{id}");
+            AppLog::info("Mesaj Gecmisi  : GET /api/rooms/{id}/messages");
+            AppLog::info("Konfigurasyon  : GET, POST, DELETE /api/config");
+            AppLog::info("WebSocket      : ws://" + address_str_ + ":" + std::to_string(port_) + "/ws");
 
             while (true)
             {
