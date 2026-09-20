@@ -24,7 +24,7 @@
     Istemcinin baglanacagi veya sunucu-adi cozumlemesi icin sorgulanacak hedef adres.
 
 .PARAMETER Room
-    Client modunda baglanilacak oda (sayisal ID veya oda adi).
+    Client modunda baslangicta baglanilacak oda (sayisal ID veya oda adi). Belirtilmezse lobi modunda baslar.
 
 .EXAMPLE
     .\build.ps1
@@ -36,7 +36,11 @@
 
 .EXAMPLE
     .\build.ps1 -Client Ahmet -Target 192.168.1.20 -Port 8080
-    Belirtilen sunucuya istemci olarak baglanir.
+    Belirtilen sunucuya lobi modunda baglanir.
+
+.EXAMPLE
+    .\build.ps1 -Client Ahmet -Room 2
+    Belirtilen odaya dogrudan katilarak baslar.
 
 .NOTES
     Oda/config yonetimi icin: .\controller.ps1 -ListRooms / -GetConfig vb.
@@ -59,9 +63,9 @@ param (
     [Alias("HostAddress")]
     [string]$Target = "127.0.0.1",
 
-    # Client modunda baglanilacak oda (ID veya Oda Adi)
+    # Client modunda baglanilacak oda (ID veya Oda Adi). Bos ise Lobi modunda baslar.
     [Alias("RoomId", "RoomName")]
-    [string]$Room = "1",
+    [string]$Room = "",
 
     [string]$ProxyHost = "127.0.0.1",
     [int]$ProxyPort = 9050,
@@ -164,40 +168,45 @@ else {
 # -------------------------------------------------------------
 if ($Server) {
     Write-Host "`n=== Sunucu Baslatiliyor (Dinlenen IP: $BindAddress, Port:$Port) ===" -ForegroundColor Green
-    & $ExePath "server" $Port.ToString() $BindAddress
+    & $ExePath "server" $Port.ToString()$BindAddress
 }
 elseif ($Client -ne "") {
-    $ResolvedRoomId = 1
-    $parsedId = 0
+    $ClientArgs = @("client", $Client, $Target, $Port.ToString())
 
-    if ([int64]::TryParse($Room, [ref]$parsedId)) {
-        $ResolvedRoomId = $parsedId
-    }
-    else {
-        $IsOnionAddress = $Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
-        if (-not $IsOnionAddress -and -not $Tor) {
-            try {
-                $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec 2 -ErrorAction Stop
-                $foundRoom = $resp.rooms | Where-Object { $_.name -ieq $Room } | Select-Object -First 1
+    if ($Room -ne "") {
+        $ResolvedRoomId = -1$parsedId = 0
 
-                if ($foundRoom) {
-                    $ResolvedRoomId = [int64]$foundRoom.id
-                    Write-Host ">>> Oda adi eslesmesi: '$Room' -> ID: #$ResolvedRoomId" -ForegroundColor Cyan
-                }
-                else {
-                    Write-Warning "Sunucuda '$Room' isimli oda bulunamadi! Varsayilan olarak #1 kullanilacak."
-                }
-            }
-            catch {
-                Write-Warning "Oda listesi REST API uzerinden alinamadi ($($_.Exception.Message)). Varsayilan #1 secildi."
-            }
+        if ([int64]::TryParse($Room, [ref]$parsedId)) {
+            $ResolvedRoomId = $parsedId
         }
         else {
-            Write-Warning "Tor (.onion) uzerinden isim cozumleme desteklenmez. Sayisal oda ID'si gereklidir. Varsayilan #1 secildi."
+            $IsOnionAddress = $Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
+            if (-not $IsOnionAddress -and -not$Tor) {
+                try {
+                    $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec 2 -ErrorAction Stop
+                    $foundRoom = $resp.rooms | Where-Object { $_.name -ieq $Room } | Select-Object -First 1
+
+                    if ($foundRoom) {
+                        $ResolvedRoomId = [int64]$foundRoom.id
+                        Write-Host ">>> Oda adi eslesmesi: '$Room' -> ID: #$ResolvedRoomId" -ForegroundColor Cyan
+                    }
+                    else {
+                        Write-Warning "Sunucuda '$Room' isimli oda bulunamadi! Lobi modunda baslatiliyor."
+                    }
+                }
+                catch {
+                    Write-Warning "Oda listesi alinamadi ($($_.Exception.Message)). Lobi modunda baslatiliyor."
+                }
+            }
+            else {
+                Write-Warning "Tor (.onion) uzerinden isim cozumleme desteklenmez. Lobi modunda baslatiliyor."
+            }
+        }
+
+        if ($ResolvedRoomId -gt 0) {
+            $ClientArgs += @("-r", $ResolvedRoomId.ToString())
         }
     }
-
-    $ClientArgs = @("client", $Client, $Target, $Port.ToString(), "-r", $ResolvedRoomId.ToString())
 
     $IsOnionAddress = $Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
     $NeedsTor = $Tor -or $IsOnionAddress -or
@@ -210,7 +219,8 @@ elseif ($Client -ne "") {
         }
     }
 
-    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client | Hedef: ${Target}:${Port} | Oda: #$ResolvedRoomId | Tor: $NeedsTor) ===" -ForegroundColor Green
+    $TargetRoomInfo = if ($Room -ne "") { "Hedef Oda: $Room" } else { "Mod: Lobi (Odasiz)" }
+    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client | Hedef: ${Target}:${Port} | $TargetRoomInfo | Tor: $NeedsTor) ===" -ForegroundColor Green
     & $ExePath @ClientArgs
 }
 else {

@@ -24,7 +24,8 @@ int main(int argc, char *argv[])
         "  Build henuz alinmamissa ise otomatik olarak once build alinir.\n\n"
         "    Sunucu Baslatma          : .\\build.ps1 -Server\n"
         "    Ozel Port Sunucu         : .\\build.ps1 -Server -Port 8080\n"
-        "    Istemci Baglantisi       : .\\build.ps1 -Client Ahmet -Target 127.0.0.1\n"
+        "    Istemci Baglantisi (Lobi): .\\build.ps1 -Client Ahmet -Target 127.0.0.1\n"
+        "    Odaya Dogrudan Giris     : .\\build.ps1 -Client Ahmet -Room 2\n"
         "    Onion Adresine Baglanma  : .\\build.ps1 -Client Ahmet -Target ex4mp1e...onion -ProxyPort 9150\n"
         "    Tor Istemcisi (Duz IP)   : .\\build.ps1 -Client Anonim -Target 1.2.3.4 -Tor -ProxyPort 9150\n"
         "    Release Modu             : .\\build.ps1 release -Server\n"
@@ -57,7 +58,7 @@ int main(int argc, char *argv[])
     std::string client_username = "Anonim";
     std::string client_host = "127.0.0.1";
     unsigned short client_port = 8080;
-    int64_t client_room_id = 1;
+    int64_t client_room_id = -1; // -1: Varsayilan Lobi Modu (Odasiz)
     bool use_tor = false;
     std::string proxy_host = "127.0.0.1";
     unsigned short proxy_port = 9050;
@@ -67,15 +68,16 @@ int main(int argc, char *argv[])
     client_cmd->add_option("hedef_ip_domain", client_host, "Hedef IP/domain/.onion adresi (Varsayilan: 127.0.0.1)");
     client_cmd->add_option("hedef_port", client_port, "Hedef port (Varsayilan: 8080)")
         ->check(CLI::Range(1, 65535));
-    client_cmd->add_option("-r,--room", client_room_id, "Baglanilacak baslangic oda ID (Varsayilan: 1)")
-        ->check(CLI::PositiveNumber);
+    client_cmd->add_option("-r,--room", client_room_id, "Baglanilacak baslangic oda ID (Varsayilan: Lobi)")
+        ->check(CLI::Range(1, 1000000));
     client_cmd->add_flag("--tor", use_tor, "Baglantiyi Tor SOCKS5 uzerinden gecmeye zorlar");
     client_cmd->add_option("--proxy-host", proxy_host, "Tor vekil host adresi (Varsayilan: 127.0.0.1)");
     client_cmd->add_option("--proxy-port", proxy_port, "Tor vekil portu (Varsayilan: 9050, Tor Browser: 9150)")
         ->check(CLI::Range(1, 65535));
     client_cmd->footer(
         "Dogrudan Ikili Calistirma Ornekleri:\n"
-        "  Dogrudan Baglanti    : client Ahmet 127.0.0.1 8080 -r 1\n"
+        "  Lobi Modunda Baglanti: client Ahmet 127.0.0.1 8080\n"
+        "  Odaya Dogrudan Baglanti: client Ahmet 127.0.0.1 8080 -r 1\n"
         "  Tor Servisi (9050)   : client Ahmet 127.0.0.1 8080 --tor -r 2\n"
         "  Tor Browser (9150)   : client Ahmet ex4mp1e...onion 8080 --proxy-port 9150\n"
         "  Uzak Tor Proxy       : client Ahmet ex4mp1e...onion 8080 --proxy-host 192.168.1.10 --proxy-port 9050");
@@ -103,16 +105,18 @@ int main(int argc, char *argv[])
             use_tor = true;
         }
 
+        const std::string room_desc = (client_room_id > 0)
+                                          ? ("Hedef Oda: #" + std::to_string(client_room_id))
+                                          : "Lobi Modu (Odasiz Bekleme)";
+
         if (use_tor)
         {
             AppLog::info("Istemci baslatiliyor (Tor Aktif -> Vekil: " +
-                         proxy_host + ":" + std::to_string(proxy_port) + " | Hedef Oda: #" +
-                         std::to_string(client_room_id) + ")...");
+                         proxy_host + ":" + std::to_string(proxy_port) + " | " + room_desc + ")...");
         }
         else
         {
-            AppLog::info("Istemci baslatiliyor (Dogrudan Baglanti -> Hedef Oda: #" +
-                         std::to_string(client_room_id) + ")...");
+            AppLog::info("Istemci baslatiliyor (Dogrudan Baglanti -> " + room_desc + ")...");
         }
 
         client::WsClient client(client_host, client_port, client_username, client_room_id, use_tor, proxy_host, proxy_port);
