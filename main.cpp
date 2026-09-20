@@ -13,7 +13,12 @@ int main(int argc, char *argv[])
     CLI::App app{"Modern C++26 Cloud & Chat Sistemi"};
     app.require_subcommand(1);
     app.footer(
-        "PowerShell Otomasyon Betigi (build.ps1) ile Calistirma:\n"
+        "PowerShell Otomasyon Betikleri:\n"
+        "  Bu proje iki bagimsiz PowerShell betigiyle birlikte gelir. Her biri tek bir\n"
+        "  soruma sahiptir: build.ps1 derler/calistirir, controller.ps1 calisan bir\n"
+        "  sunucuyu REST API uzerinden yonetir.\n\n"
+
+        "1) build.ps1 -> Derleme, Test ve Calistirma:\n"
         "  -Server / -Client kullanildiginda, exe zaten build edilmisse OTOMATIK olarak\n"
         "  yeniden build alinmaz (calisan bir sunucuyu etkilemez), sadece calistirilir.\n"
         "  Build henuz alinmamissa ise otomatik olarak once build alinir.\n\n"
@@ -25,7 +30,20 @@ int main(int argc, char *argv[])
         "    Release Modu             : .\\build.ps1 release -Server\n"
         "    Temiz Derleme (Clean)    : .\\build.ps1 -Clean -Server\n"
         "    Zorla Yeniden Build      : .\\build.ps1 -Rebuild -Server\n"
-        "    Build'e Hic Dokunma      : .\\build.ps1 -SkipBuild -Server\n");
+        "    Build'e Hic Dokunma      : .\\build.ps1 -SkipBuild -Server\n\n"
+
+        "2) controller.ps1 -> Sunucu Yonetimi (Oda + Config REST API):\n"
+        "  Sunucu zaten calisiyorken odalari ve /api/config yapilandirmasini yonetmek\n"
+        "  icindir; Postman veya elle curl calistirmaya gerek birakmaz. build.ps1'den\n"
+        "  bagimsizdir ve derleme/test adimlarina hic dokunmaz.\n\n"
+        "    Odalari Listele          : .\\controller.ps1 -ListRooms\n"
+        "    Oda Olustur              : .\\controller.ps1 -CreateRoom \"Genel Sohbet\"\n"
+        "    Oda Kapat / Ac           : .\\controller.ps1 -CloseRoom 3 / -OpenRoom 3\n"
+        "    Odayi Sil                : .\\controller.ps1 -DeleteRoom 3\n"
+        "    Config Oku               : .\\controller.ps1 -GetConfig\n"
+        "    Config Guncelle          : .\\controller.ps1 -SetConfig -ConfigHost node1.internal -ConfigPort 9000\n"
+        "    Config Sifirla           : .\\controller.ps1 -ResetConfig\n\n"
+        "  Detayli parametre aciklamalari icin: Get-Help .\\build.ps1 -Full  /  Get-Help .\\controller.ps1 -Full\n");
 
     unsigned short server_port = 8080;
     std::string server_ip = "127.0.0.1";

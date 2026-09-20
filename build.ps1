@@ -1,4 +1,46 @@
 ﻿#Requires -Version 5.1
+<#
+.SYNOPSIS
+    Modern C++26 Cloud & Chat Sistemi icin derleme, test ve calistirma otomasyonu.
+
+.DESCRIPTION
+    build.ps1, projenin CMake/Ninja tabanli yapilandirma, derleme ve CTest adimlarini
+    tek komutla yonetir; ardindan istenirse sunucuyu veya istemciyi baslatir.
+
+    Bu betik YALNIZCA derleme ve calistirma (build & run) ile ilgilenir. Calisan bir
+    sunucudaki odalari veya REST API yapilandirmasini yonetmek icin (Postman'a gerek
+    kalmadan) ayri betik olan .\controller.ps1 kullanilir.
+
+.PARAMETER Mode
+    Derleme modu: "debug"/"d" veya "release"/"r". Varsayilan: debug.
+
+.PARAMETER Server
+    Belirtilirse, derleme sonrasi sunucu modunda calistirir.
+
+.PARAMETER Client
+    Belirtilirse, verilen kullanici adiyla istemci modunda calistirir.
+
+.PARAMETER Target
+    Istemcinin baglanacagi veya sunucu-adi cozumlemesi icin sorgulanacak hedef adres.
+
+.PARAMETER Room
+    Client modunda baglanilacak oda (sayisal ID veya oda adi).
+
+.EXAMPLE
+    .\build.ps1
+    Debug modunda derler ve birim testlerini calistirir.
+
+.EXAMPLE
+    .\build.ps1 -Server -Port 9000 -BindAddress 127.0.0.1
+    Ozel port ve IP ile sunucuyu derleyip baslatir.
+
+.EXAMPLE
+    .\build.ps1 -Client Ahmet -Target 192.168.1.20 -Port 8080
+    Belirtilen sunucuya istemci olarak baglanir.
+
+.NOTES
+    Oda/config yonetimi icin: .\controller.ps1 -ListRooms / -GetConfig vb.
+#>
 [CmdletBinding()]
 param (
     [Parameter(Position = 0)]
@@ -24,18 +66,13 @@ param (
     [string]$ProxyHost = "127.0.0.1",
     [int]$ProxyPort = 9050,
 
-    # --- REST API Yonetim Parametreleri ---
-    [switch]$ListRooms,
-    [string]$CreateRoom = "",
-    [string]$CloseRoom = "",
-    [string]$OpenRoom = "",
-    [string]$DeleteRoom = "",
-
     # Build Kontrol Bayraklari
     [switch]$SkipBuild,
     [switch]$Rebuild,
     [switch]$NoTest,
+    [Alias("Clear")]
     [switch]$Clean,
+    [Alias("ClearOnly")]
     [switch]$CleanOnly
 )
 
@@ -45,96 +82,7 @@ $ErrorActionPreference = "Stop"
 $BaseApiUrl = "http://${Target}:${Port}"
 
 # -------------------------------------------------------------
-# 1. API Yonetim Yardimci Fonksiyonlari
-# -------------------------------------------------------------
-function Resolve-TargetRoomId([string]$RoomIdentifier) {
-    $parsedId = 0
-    if ([int64]::TryParse($RoomIdentifier, [ref]$parsedId)) {
-        return $parsedId
-    }
-
-    try {
-        $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec 3 -ErrorAction Stop
-        $found = $resp.rooms | Where-Object { $_.name -ieq $RoomIdentifier } | Select-Object -First 1
-        if ($found) {
-            return [int64]$found.id
-        }
-        Write-Error "Sunucuda '$RoomIdentifier' isimli bir oda bulunamadi."
-        exit 1
-    }
-    catch {
-        Write-Error "Oda listesi alinamadi ($($_.Exception.Message)). Sunucunun acik oldugundan emin olun."
-        exit 1
-    }
-}
-
-# -------------------------------------------------------------
-# 2. API Modu Tetiklendiyse Dogrudan Calis ve Cik
-# -------------------------------------------------------------
-$IsApiMode = $ListRooms -or ($CreateRoom -ne "") -or ($CloseRoom -ne "") -or ($OpenRoom -ne "") -or ($DeleteRoom -ne "")
-
-if ($IsApiMode) {
-    try {
-        if ($ListRooms) {
-            Write-Host "`n>>> Odalar Listeleniyor ($BaseApiUrl/api/rooms)..." -ForegroundColor Cyan
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec 3
-            if ($resp.rooms.Count -eq 0) {
-                Write-Host "Henuz hic oda olusturulmamis." -ForegroundColor Yellow
-            }
-            else {
-                $resp.rooms | Format-Table -Property @(
-                    @{Label = "ID"; Expression = { $_.id }; Width = 6 },
-                    @{Label = "Oda Adi"; Expression = { $_.name }; Width = 25 },
-                    @{Label = "Durum"; Expression = { if ($_.is_open) { "Acik" } else { "Kapali" } }; Width = 10 },
-                    @{Label = "Aktif Baglanti"; Expression = { $_.active_ws_clients }; Width = 15 },
-                    @{Label = "Olusturulma Tarihi"; Expression = { $_.created_at }; Width = 20 }
-                )
-            }
-        }
-        elseif ($CreateRoom -ne "") {
-            Write-Host "`n>>> Yeni Oda Olusturuluyor: '$CreateRoom'..." -ForegroundColor Cyan
-            $body = @{ name = $CreateRoom } | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Post -ContentType "application/json" -Body $body -TimeoutSec 3
-            Write-Host "Oda basariyla olusturuldu!" -ForegroundColor Green
-            Write-Host "Oda ID    : $($resp.room_id)" -ForegroundColor White
-            Write-Host "Oda Adi   : $($resp.name)" -ForegroundColor White
-            Write-Host "Tarih     : $($resp.created_at)" -ForegroundColor DarkGray
-        }
-        elseif ($CloseRoom -ne "") {
-            $roomId = Resolve-TargetRoomId $CloseRoom
-            Write-Host "`n>>> Oda Kapatiliyor (ID: #$roomId)..." -ForegroundColor Cyan
-            $body = @{ is_open = $false } | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Put -ContentType "application/json" -Body $body -TimeoutSec 3
-            Write-Host "Oda basariyla kapatildi (#$roomId - $($resp.name)). Yeni girisler engellendi." -ForegroundColor Yellow
-        }
-        elseif ($OpenRoom -ne "") {
-            $roomId = Resolve-TargetRoomId $OpenRoom
-            Write-Host "`n>>> Oda Yeniden Aciliyor (ID: #$roomId)..." -ForegroundColor Cyan
-            $body = @{ is_open = $true } | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Put -ContentType "application/json" -Body $body -TimeoutSec 3
-            Write-Host "Oda basariyla erisime acildi (#$roomId - $($resp.name))." -ForegroundColor Green
-        }
-        elseif ($DeleteRoom -ne "") {
-            $roomId = Resolve-TargetRoomId $DeleteRoom
-            Write-Host "`n>>> Oda Siliniyor (ID: #$roomId)..." -ForegroundColor Red
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Delete -TimeoutSec 3
-            Write-Host "Oda ve tum sohbet gecmisi veritabanindan silindi (#$roomId)." -ForegroundColor Green
-        }
-    }
-    catch {
-        $msg = $_.Exception.Message
-        if ($_.Exception.Response) {
-            $stream = $_.Exception.Response.GetResponseStream()
-            $reader = New-Object System.IO.StreamReader($stream)
-            $msg = $reader.ReadToEnd()
-        }
-        Write-Error "API Islemi Basarisiz: $msg"
-    }
-    exit 0
-}
-
-# -------------------------------------------------------------
-# 3. Build & Run Modu Yapilandirmasi
+# 1. Build & Run Modu Yapilandirmasi
 # -------------------------------------------------------------
 $Config = if ($Mode -in @("debug", "d")) { "debug" } else { "release" }
 $Preset = "windows-$Config"
@@ -212,7 +160,7 @@ else {
 }
 
 # -------------------------------------------------------------
-# 4. Sunucu veya Istemciyi Calistirma
+# 2. Sunucu veya Istemciyi Calistirma
 # -------------------------------------------------------------
 if ($Server) {
     Write-Host "`n=== Sunucu Baslatiliyor (Dinlenen IP: $BindAddress, Port:$Port) ===" -ForegroundColor Green
@@ -229,8 +177,7 @@ elseif ($Client -ne "") {
         $IsOnionAddress = $Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
         if (-not $IsOnionAddress -and -not $Tor) {
             try {
-                $apiUrl = "http://${Target}:${Port}/api/rooms"
-                $resp = Invoke-RestMethod -Uri $apiUrl -Method Get -TimeoutSec 2 -ErrorAction Stop
+                $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec 2 -ErrorAction Stop
                 $foundRoom = $resp.rooms | Where-Object { $_.name -ieq $Room } | Select-Object -First 1
 
                 if ($foundRoom) {
@@ -267,5 +214,5 @@ elseif ($Client -ne "") {
     & $ExePath @ClientArgs
 }
 else {
-    Write-Host "`nDerleme basarili. Calistirmak icin -Server, -Client veya API komutlarini (-ListRooms, -CreateRoom vb.) kullanin." -ForegroundColor Green
+    Write-Host "`nDerleme basarili. Calistirmak icin -Server veya -Client kullanin. Oda/config yonetimi icin .\controller.ps1 komutunu kullanin." -ForegroundColor Green
 }
