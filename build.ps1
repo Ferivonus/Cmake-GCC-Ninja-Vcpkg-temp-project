@@ -7,10 +7,6 @@
     build.ps1, projenin CMake/Ninja tabanli yapilandirma, derleme ve CTest adimlarini
     tek komutla yonetir; ardindan istenirse sunucuyu veya istemciyi baslatir.
 
-    Bu betik YALNIZCA derleme ve calistirma (build & run) ile ilgilenir. Calisan bir
-    sunucudaki odalari veya REST API yapilandirmasini yonetmek icin (Postman'a gerek
-    kalmadan) ayri betik olan .\controller.ps1 kullanilir.
-
 .PARAMETER Mode
     Derleme modu: "debug"/"d" veya "release"/"r". Varsayilan: debug.
 
@@ -26,24 +22,8 @@
 .PARAMETER Room
     Client modunda baslangicta baglanilacak oda (sayisal ID veya oda adi). Belirtilmezse lobi modunda baslar.
 
-.EXAMPLE
-    .\build.ps1
-    Debug modunda derler ve birim testlerini calistirir.
-
-.EXAMPLE
-    .\build.ps1 -Server -Port 9000 -BindAddress 127.0.0.1
-    Ozel port ve IP ile sunucuyu derleyip baslatir.
-
-.EXAMPLE
-    .\build.ps1 -Client Ahmet -Target 192.168.1.20 -Port 8080
-    Belirtilen sunucuya lobi modunda baglanir.
-
-.EXAMPLE
-    .\build.ps1 -Client Ahmet -Room 2
-    Belirtilen odaya dogrudan katilarak baslar.
-
-.NOTES
-    Oda/config yonetimi icin: .\controller.ps1 -ListRooms / -GetConfig vb.
+.PARAMETER Password
+    Oda icin E2EE (AES-256) sifreleme parolasi.
 #>
 [CmdletBinding()]
 param (
@@ -66,6 +46,11 @@ param (
     # Client modunda baglanilacak oda (ID veya Oda Adi). Bos ise Lobi modunda baslar.
     [Alias("RoomId", "RoomName")]
     [string]$Room = "",
+
+    # E2EE Sifreleme Parolasi
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+    [Alias("Pass", "Key")]
+    [string]$Password = "",
 
     [string]$ProxyHost = "127.0.0.1",
     [int]$ProxyPort = 9050,
@@ -208,9 +193,12 @@ elseif ($Client -ne "") {
         }
     }
 
+    if ($Password -ne "") {
+        $ClientArgs += @("-p", $Password)
+    }
+
     $IsOnionAddress = $Target.EndsWith(".onion", [System.StringComparison]::OrdinalIgnoreCase)
-    $NeedsTor = $Tor -or $IsOnionAddress -or
-    $PSBoundParameters.ContainsKey('ProxyHost') -or $PSBoundParameters.ContainsKey('ProxyPort')
+    $NeedsTor = $Tor -or $IsOnionAddress -or $PSBoundParameters.ContainsKey('ProxyHost') -or $PSBoundParameters.ContainsKey('ProxyPort')
 
     if ($NeedsTor) {
         $ClientArgs += @("--proxy-host", $ProxyHost, "--proxy-port", $ProxyPort.ToString())
@@ -219,8 +207,9 @@ elseif ($Client -ne "") {
         }
     }
 
-    $TargetRoomInfo = if ($Room -ne "") { "Hedef Oda: $Room" } else { "Mod: Lobi (Odasiz)" }
-    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client | Hedef: ${Target}:${Port} | $TargetRoomInfo | Tor: $NeedsTor) ===" -ForegroundColor Green
+    $TargetRoomInfo = if ($Room -ne "") { "Hedef Oda: #$Room" } else { "Mod: Lobi (Odasiz)" }
+    $PassInfo = if ($Password -ne "") { " | E2EE: Aktif" } else { "" }
+    Write-Host "`n=== Istemci Baslatiliyor (Kullanici: $Client | Hedef: ${Target}:${Port} | $TargetRoomInfo$PassInfo | Tor: $NeedsTor) ===" -ForegroundColor Green
     & $ExePath @ClientArgs
 }
 else {

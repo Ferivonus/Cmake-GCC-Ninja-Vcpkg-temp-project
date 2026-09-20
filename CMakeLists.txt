@@ -20,6 +20,7 @@ find_package(boost_asio REQUIRED CONFIG)
 find_package(boost_beast REQUIRED CONFIG)
 find_package(SQLite3 REQUIRED)
 find_package(CLI11 CONFIG REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 # 1. Json Service
 add_library(json_service STATIC services/json_service.cpp)
@@ -33,7 +34,13 @@ target_compile_features(app_config PRIVATE cxx_std_17)
 target_include_directories(app_config PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(app_config PRIVATE spdlog::spdlog)
 
-# 3. Backend Service
+# 3. Crypto Service (Yeni eklendi)
+add_library(crypto_service STATIC services/crypto_service.cpp)
+target_compile_features(crypto_service PRIVATE cxx_std_26)
+target_include_directories(crypto_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(crypto_service PUBLIC OpenSSL::Crypto)
+
+# 4. Backend Service
 add_library(backend_service STATIC 
     services/db_service.cpp
     backend/backend.cpp
@@ -45,15 +52,17 @@ target_include_directories(backend_service PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(backend_service PUBLIC
     json_service
     app_config
+    crypto_service
     Boost::beast
     Boost::asio
     Threads::Threads
     SQLite::SQLite3
     $<$<PLATFORM_ID:Windows>:ws2_32>
     $<$<PLATFORM_ID:Windows>:mswsock>
+    $<$<PLATFORM_ID:Windows>:crypt32>
 )
 
-# 4. Client Service
+# 5. Client Service
 add_library(client_service STATIC
     client/ws_client.cpp
 )
@@ -69,7 +78,7 @@ target_link_libraries(client_service PUBLIC
     $<$<PLATFORM_ID:Windows>:mswsock>
 )
 
-# 5. Main Uygulama
+# 6. Main Uygulama
 add_executable(main_app main.cpp)
 target_compile_features(main_app PRIVATE cxx_std_26)
 target_compile_options(main_app PRIVATE 
@@ -85,7 +94,7 @@ target_link_libraries(main_app PRIVATE
     CLI11::CLI11
 )
 
-# 6. Birim Testleri
+# 7. Birim Testleri
 enable_testing()
 add_executable(unit_tests 
     tests/test_json.cpp

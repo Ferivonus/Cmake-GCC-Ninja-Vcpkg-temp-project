@@ -1,4 +1,6 @@
 #include "backend/http_handler.hpp"
+#include "services/crypto_service.hpp"
+#include "config/app_config.hpp"
 #include <nlohmann/json.hpp>
 #include <regex>
 #include <chrono>
@@ -10,6 +12,7 @@ namespace backend
     namespace http = boost::beast::http;
     using json = nlohmann::json;
 
+    // Güncel yerel zamanı "YYYY-AA-GG SS:DD:SS" formatında metin olarak üretir
     static std::string current_time_str()
     {
         const auto now = std::chrono::system_clock::now();
@@ -25,6 +28,7 @@ namespace backend
         return std::string(buf);
     }
 
+    // URL parametresinden gelen metinsel ID değerini güvenle int64_t türüne çevirir
     static bool safe_parse_id(const std::string &str, int64_t &out_id)
     {
         try
@@ -43,16 +47,31 @@ namespace backend
         http::request<http::string_body> &&req,
         std::shared_ptr<ServerState> state)
     {
+        // 1. Temel Yanıt Şablonunun Hazırlanması
         http::response<http::string_body> res{http::status::ok, req.version()};
         res.set(http::field::server, "ModernApp-Cloud/1.0");
         res.set(http::field::content_type, "application/json");
         res.keep_alive(req.keep_alive());
 
+        // Tarayıcıların (Frontend) farklı portlardan rahatça erişebilmesi için CORS başlıkları
+        res.set(http::field::access_control_allow_origin, "*");
+        res.set(http::field::access_control_allow_methods, "GET, POST, PUT, DELETE, OPTIONS");
+        res.set(http::field::access_control_allow_headers, "Content-Type, Authorization");
+
+        // Tarayıcıların ön kontrol (preflight) OPTIONS sorgusu için hızlı onay yanıtı
+        if (req.method() == http::verb::options)
+        {
+            res.result(http::status::no_content);
+            res.prepare_payload();
+            return res;
+        }
+
+        // İstek yolundaki sorgu parametrelerini ('?') temizleyerek salt yolu alıyoruz
         const std::string target = std::string(req.target());
         const auto q_pos = target.find('?');
         const std::string path = (q_pos != std::string::npos) ? target.substr(0, q_pos) : target;
 
-        // 1. GET /health
+        // 2. GET /health - Sunucu ve Veritabanı Sağlık Kontrolü
         if (path == "/health")
         {
             if (req.method() != http::verb::get)
@@ -80,7 +99,7 @@ namespace backend
             return res;
         }
 
-        // 2. /api/rooms Koleksiyon Endpoint'leri
+        // 3. /api/rooms - Oda Listeleme (GET) ve Yeni Oda Açma (POST)
         if (path == "/api/rooms")
         {
             if (req.method() == http::verb::get)
@@ -106,7 +125,7 @@ namespace backend
                     if (!body_json.is_object() || !body_json.contains("name") || !body_json["name"].is_string())
                     {
                         res.result(http::status::bad_request);
-                        res.body() = R"({"error":"'name' alani string olarak zorunludur"})";
+                        res.body() = R"({"error":"'name' alani metinsel (string) olarak zorunludur"})";
                     }
                     else
                     {
@@ -137,7 +156,6 @@ namespace backend
                             else
                             {
                                 res.result(http::status::conflict);
-                                // Delimiter çakışmasını önlemek için özel ayırıcı kullanıldı
                                 res.body() = R"json({"error":"Oda olusturulamadi (isim cakismasi olabilir)"})json";
                             }
                         }
@@ -146,7 +164,7 @@ namespace backend
                 catch (const json::parse_error &)
                 {
                     res.result(http::status::bad_request);
-                    res.body() = R"({"error":"Gecersiz JSON"})";
+                    res.body() = R"({"error":"Gecersiz JSON formati"})";
                 }
             }
             else
@@ -158,7 +176,7 @@ namespace backend
             return res;
         }
 
-        // 3. /api/rooms/{id}/messages Mesaj Geçmişi
+        // 4. /api/rooms/{id}/messages - Mesaj Geçmişi ve Otomatik Deşifreleme
         static const std::regex msg_regex(R"(^/api/rooms/(\d+)/messages$)");
         std::smatch match_msg;
         if (std::regex_match(path, match_msg, msg_regex))
@@ -183,14 +201,45 @@ namespace backend
                     {
                         const auto messages = state->db_service.get_room_messages(room_id);
                         json msg_arr = json::array();
+
                         for (const auto &m : messages)
                         {
+                            std::string display_text = m.message;
+
+                            // Mesaj şifrelenmiş bir JSON zarfı mı kontrol ediyoruz
+                            try
+                            {
+                                if (!m.message.empty() && m.message.front() == '{' && m.message.back() == '}')
+                                {
+                                    auto parsed = json::parse(m.message);
+                                    if (parsed.is_object() && parsed.value("__enc", false))
+                                    {
+                                        crypto::EncryptedPayload payload{
+                                            parsed.value("c", ""),
+                                            parsed.value("iv", ""),
+                                            parsed.value("tag", "")};
+
+                                        // AES-256-GCM ile çözüyoruz
+                                        auto decrypted = crypto::CryptoService::decrypt(payload, state->db_cipher_key);
+                                        if (decrypted.has_value())
+                                        {
+                                            display_text = std::move(*decrypted);
+                                        }
+                                    }
+                                }
+                            }
+                            catch (...)
+                            {
+                                // Şifre çözülemez veya format standart JSON değilse orijinal metin korunur
+                            }
+
                             msg_arr.push_back({{"id", m.id},
                                                {"room_id", m.room_id},
                                                {"username", m.username},
-                                               {"message", m.message},
+                                               {"message", display_text},
                                                {"created_at", m.created_at}});
                         }
+
                         res.body() = json({{"room_id", room_id}, {"messages", msg_arr}}).dump();
                     }
                 }
@@ -204,7 +253,7 @@ namespace backend
             return res;
         }
 
-        // 4. /api/rooms/{id} Tekil Oda CRUD (GET, PUT, DELETE)
+        // 5. /api/rooms/{id} - Tekil Oda İşlemleri (GET, PUT, DELETE)
         static const std::regex room_regex(R"(^/api/rooms/(\d+)$)");
         std::smatch match_room;
         if (std::regex_match(path, match_room, room_regex))
@@ -277,7 +326,7 @@ namespace backend
                             if (!body_json["is_open"].is_boolean())
                             {
                                 res.result(http::status::bad_request);
-                                res.body() = R"({"error":"'is_open' alani boolean olmalidir"})";
+                                res.body() = R"({"error":"'is_open' alani mantiksal (boolean) olmalidir"})";
                                 res.prepare_payload();
                                 return res;
                             }
@@ -316,14 +365,14 @@ namespace backend
                         else
                         {
                             res.result(http::status::internal_server_error);
-                            res.body() = R"({"error":"Oda guncelleme basarisiz"})";
+                            res.body() = R"({"error":"Oda guncelleme basarisiz oldu"})";
                         }
                     }
                 }
                 catch (const json::parse_error &)
                 {
                     res.result(http::status::bad_request);
-                    res.body() = R"({"error":"Gecersiz JSON"})";
+                    res.body() = R"({"error":"Gecersiz JSON formati"})";
                 }
             }
             else if (req.method() == http::verb::delete_)
@@ -334,12 +383,11 @@ namespace backend
                         {"type", "system"},
                         {"event", "room_deleted"},
                         {"room_id", room_id},
-                        {"message", "Oda silinmistir."}};
+                        {"message", "Oda kalici olarak silinmistir."}};
                     state->broadcast_to_room(room_id, del_evt.dump());
                     state->evict_from_room(room_id);
 
                     AppLog::info("[API] Oda silindi (ID: #" + std::to_string(room_id) + ")");
-
                     res.body() = json({{"status", "success"}, {"message", "Oda ve tum mesajlari silindi"}}).dump();
                 }
                 else
@@ -357,7 +405,7 @@ namespace backend
             return res;
         }
 
-        // 5. /api/config
+        // 6. /api/config - Canlı Yapılandırma Uç Noktası (GET, POST, DELETE)
         if (path == "/api/config")
         {
             if (req.method() == http::verb::get)
@@ -377,27 +425,28 @@ namespace backend
                 else
                 {
                     res.result(http::status::bad_request);
-                    res.body() = R"({"status":"error","message":"Gecersiz JSON"})";
+                    res.body() = R"({"status":"error","message":"Gecersiz JSON formati"})";
                 }
             }
             else if (req.method() == http::verb::delete_)
             {
                 std::lock_guard<std::mutex> lock(state->mtx);
                 state->config = AppConfig{"127.0.0.1", 8080, false};
-                res.body() = R"({"status":"success","message":"Ayar silindi/sifirlandi"})";
+                res.body() = R"({"status":"success","message":"Ayar varsayilana sifirlandi"})";
             }
             else
             {
                 res.result(http::status::method_not_allowed);
-                res.body() = R"({"error":"Izin verilmeyen metot"})";
+                res.body() = R"({"error":"Izin verilmeyen HTTP metodu"})";
             }
             res.prepare_payload();
             return res;
         }
 
+        // Tanımlanmamış tüm yollar için 404 Not Found
         res.result(http::status::not_found);
-        res.body() = R"({"error":"Endpoint bulunamadi"})";
+        res.body() = R"({"error":"Uç nokta bulunamadi"})";
         res.prepare_payload();
         return res;
     }
-}
+} // namespace backend

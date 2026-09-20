@@ -1,7 +1,9 @@
 // db_service.cpp
-#include "db_service.hpp"
+#include "services/db_service.hpp"
 #include "config/app_config.hpp"
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 
 namespace backend
 {
@@ -75,6 +77,63 @@ namespace backend
 
         AppLog::info("SQLite veritabani hazir (Oda sistemi ve WAL devrede): " + db_path);
         return true;
+    }
+
+    int64_t DbService::ensure_default_room(const std::string &name)
+    {
+        std::lock_guard<std::mutex> lock(db_mtx_);
+        if (!db_)
+            return -1;
+
+        // 1. Mevcut oda sayısını sorgula
+        const char *count_sql = "SELECT COUNT(*) FROM rooms;";
+        sqlite3_stmt *stmt = nullptr;
+        if (sqlite3_prepare_v2(db_, count_sql, -1, &stmt, nullptr) != SQLITE_OK)
+            return -1;
+
+        int count = 0;
+        if (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            count = sqlite3_column_int(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+
+        // Zaten en az 1 oda varsa yeni oda ekleme
+        if (count > 0)
+        {
+            return 0;
+        }
+
+        // 2. Zaman damgasını oluştur
+        const auto now = std::chrono::system_clock::now();
+        const auto t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm_buf{};
+#if defined(_WIN32)
+        localtime_s(&tm_buf, &t);
+#else
+        localtime_r(&t, &tm_buf);
+#endif
+        char ts_buf[32];
+        std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
+        const std::string ts_str(ts_buf);
+
+        // 3. ID 1 olacak şekilde varsayılan odayı ekle
+        const char *insert_sql = "INSERT INTO rooms (id, name, is_open, created_at, updated_at) VALUES (1, ?, 1, ?, ?);";
+        if (sqlite3_prepare_v2(db_, insert_sql, -1, &stmt, nullptr) != SQLITE_OK)
+            return -1;
+
+        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, ts_str.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, ts_str.c_str(), -1, SQLITE_STATIC);
+
+        int64_t inserted_id = -1;
+        if (sqlite3_step(stmt) == SQLITE_DONE)
+        {
+            inserted_id = static_cast<int64_t>(sqlite3_last_insert_rowid(db_));
+            AppLog::info("Varsayilan baslangic odasi olusturuldu: '" + name + "' (ID: #" + std::to_string(inserted_id) + ")");
+        }
+        sqlite3_finalize(stmt);
+        return inserted_id;
     }
 
     bool DbService::ping()

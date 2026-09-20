@@ -9,6 +9,7 @@
     "boost-beast",
     "boost-asio",
     "sqlite3",
-    "cli11"
+    "cli11",
+    "openssl"
   ]
 }

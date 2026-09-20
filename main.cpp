@@ -25,7 +25,8 @@ int main(int argc, char *argv[])
         "    Sunucu Baslatma          : .\\build.ps1 -Server\n"
         "    Ozel Port Sunucu         : .\\build.ps1 -Server -Port 8080\n"
         "    Istemci Baglantisi (Lobi): .\\build.ps1 -Client Ahmet -Target 127.0.0.1\n"
-        "    Odaya Dogrudan Giris     : .\\build.ps1 -Client Ahmet -Room 2\n"
+        "    Odaya Dogrudan Giris     : .\\build.ps1 -Client Ahmet -Room 1\n"
+        "    E2EE Sifreli Giris       : .\\build.ps1 -Client Ahmet -Room 1 -Password \"gizli123\"\n"
         "    Onion Adresine Baglanma  : .\\build.ps1 -Client Ahmet -Target ex4mp1e...onion -ProxyPort 9150\n"
         "    Tor Istemcisi (Duz IP)   : .\\build.ps1 -Client Anonim -Target 1.2.3.4 -Tor -ProxyPort 9150\n"
         "    Release Modu             : .\\build.ps1 release -Server\n"
@@ -38,7 +39,7 @@ int main(int argc, char *argv[])
         "  icindir; Postman veya elle curl calistirmaya gerek birakmaz. build.ps1'den\n"
         "  bagimsizdir ve derleme/test adimlarina hic dokunmaz.\n\n"
         "    Odalari Listele          : .\\controller.ps1 -ListRooms\n"
-        "    Oda Olustur              : .\\controller.ps1 -CreateRoom \"Genel Sohbet\"\n"
+        "    Oda Olustur (E2EE)       : .\\controller.ps1 -CreateRoom \"Genel Sohbet\" -Password \"gizli123\"\n"
         "    Oda Kapat / Ac           : .\\controller.ps1 -CloseRoom 3 / -OpenRoom 3\n"
         "    Odayi Sil                : .\\controller.ps1 -DeleteRoom 3\n"
         "    Config Oku               : .\\controller.ps1 -GetConfig\n"
@@ -59,6 +60,7 @@ int main(int argc, char *argv[])
     std::string client_host = "127.0.0.1";
     unsigned short client_port = 8080;
     int64_t client_room_id = -1; // -1: Varsayilan Lobi Modu (Odasiz)
+    std::string client_password = "";
     bool use_tor = false;
     std::string proxy_host = "127.0.0.1";
     unsigned short proxy_port = 9050;
@@ -70,6 +72,7 @@ int main(int argc, char *argv[])
         ->check(CLI::Range(1, 65535));
     client_cmd->add_option("-r,--room", client_room_id, "Baglanilacak baslangic oda ID (Varsayilan: Lobi)")
         ->check(CLI::Range(1, 1000000));
+    client_cmd->add_option("-p,--password", client_password, "Oda icin E2EE sifreleme parolasi (Istege bagli)");
     client_cmd->add_flag("--tor", use_tor, "Baglantiyi Tor SOCKS5 uzerinden gecmeye zorlar");
     client_cmd->add_option("--proxy-host", proxy_host, "Tor vekil host adresi (Varsayilan: 127.0.0.1)");
     client_cmd->add_option("--proxy-port", proxy_port, "Tor vekil portu (Varsayilan: 9050, Tor Browser: 9150)")
@@ -78,9 +81,10 @@ int main(int argc, char *argv[])
         "Dogrudan Ikili Calistirma Ornekleri:\n"
         "  Lobi Modunda Baglanti: client Ahmet 127.0.0.1 8080\n"
         "  Odaya Dogrudan Baglanti: client Ahmet 127.0.0.1 8080 -r 1\n"
-        "  Tor Servisi (9050)   : client Ahmet 127.0.0.1 8080 --tor -r 2\n"
-        "  Tor Browser (9150)   : client Ahmet ex4mp1e...onion 8080 --proxy-port 9150\n"
-        "  Uzak Tor Proxy       : client Ahmet ex4mp1e...onion 8080 --proxy-host 192.168.1.10 --proxy-port 9050");
+        "  E2EE Sifreli Baglanti  : client Ahmet 127.0.0.1 8080 -r 1 -p gizli123\n"
+        "  Tor Servisi (9050)     : client Ahmet 127.0.0.1 8080 --tor -r 2\n"
+        "  Tor Browser (9150)     : client Ahmet ex4mp1e...onion 8080 --proxy-port 9150\n"
+        "  Uzak Tor Proxy         : client Ahmet ex4mp1e...onion 8080 --proxy-host 192.168.1.10 --proxy-port 9050");
 
     CLI11_PARSE(app, argc, argv);
 
@@ -105,9 +109,14 @@ int main(int argc, char *argv[])
             use_tor = true;
         }
 
-        const std::string room_desc = (client_room_id > 0)
-                                          ? ("Hedef Oda: #" + std::to_string(client_room_id))
-                                          : "Lobi Modu (Odasiz Bekleme)";
+        std::string room_desc = (client_room_id > 0)
+                                    ? ("Hedef Oda: #" + std::to_string(client_room_id))
+                                    : "Lobi Modu (Odasiz Bekleme)";
+
+        if (!client_password.empty())
+        {
+            room_desc += " [E2EE Aktif]";
+        }
 
         if (use_tor)
         {
@@ -119,7 +128,8 @@ int main(int argc, char *argv[])
             AppLog::info("Istemci baslatiliyor (Dogrudan Baglanti -> " + room_desc + ")...");
         }
 
-        client::WsClient client(client_host, client_port, client_username, client_room_id, use_tor, proxy_host, proxy_port);
+        // Duzeltme: Constructor arguman sirasi kullanici adi -> host -> port seklinde eslendi
+        client::WsClient client(client_username, client_host, client_port, client_room_id, client_password, use_tor, proxy_host, proxy_port);
         client.run_interactive();
     }
 

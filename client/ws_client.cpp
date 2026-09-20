@@ -1,5 +1,6 @@
 #include "client/ws_client.hpp"
 #include "config/app_config.hpp"
+#include "services/crypto_service.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
 #include <boost/asio/ip/tcp.hpp>
@@ -20,16 +21,30 @@ namespace client
     using tcp = asio::ip::tcp;
     using json = nlohmann::json;
 
-    WsClient::WsClient(std::string host, unsigned short port, std::string username,
-                       int64_t initial_room_id, bool use_tor,
-                       std::string proxy_host, unsigned short proxy_port)
-        : host_(std::move(host)), port_(port), username_(std::move(username)),
-          current_room_id_(initial_room_id), use_tor_(use_tor),
-          proxy_host_(std::move(proxy_host)), proxy_port_(proxy_port)
+    WsClient::WsClient(std::string username,
+                       std::string host,
+                       unsigned short port,
+                       int64_t initial_room_id,
+                       std::string initial_password,
+                       bool use_tor,
+                       std::string proxy_host,
+                       unsigned short proxy_port)
+        : username_(std::move(username)),
+          host_(std::move(host)),
+          port_(port),
+          current_room_id_(initial_room_id),
+          use_tor_(use_tor),
+          proxy_host_(std::move(proxy_host)),
+          proxy_port_(proxy_port)
     {
         if (host_.find(".onion") != std::string::npos)
         {
             use_tor_ = true;
+        }
+
+        if (!initial_password.empty())
+        {
+            current_room_key_ = crypto::CryptoService::derive_key(initial_password);
         }
     }
 
@@ -57,7 +72,6 @@ namespace client
 
         boost::system::error_code ec;
 
-        // 1. SOCKS5 Metot Anlaşması (0x05: SOCKS v5, 0x01: 1 metot, 0x00: Kimlik Doğrulamasız)
         const uint8_t greeting[] = {0x05, 0x01, 0x00};
         asio::write(socket, asio::buffer(greeting), ec);
         if (ec)
@@ -71,13 +85,12 @@ namespace client
             return false;
         }
 
-        // 2. CONNECT Talebi: DNS sızıntısını önlemek için ATYP=0x03 (Domain Adı)
         std::vector<uint8_t> req;
         req.reserve(7 + host_.size());
-        req.push_back(0x05); // SOCKS sürümü
-        req.push_back(0x01); // Komut: CONNECT
-        req.push_back(0x00); // Rezerve bayt
-        req.push_back(0x03); // Adres tipi: Alan adı (Domain Name)
+        req.push_back(0x05);
+        req.push_back(0x01);
+        req.push_back(0x00);
+        req.push_back(0x03);
         req.push_back(static_cast<uint8_t>(host_.size()));
         req.insert(req.end(), host_.begin(), host_.end());
         req.push_back(static_cast<uint8_t>((port_ >> 8) & 0xFF));
@@ -95,20 +108,19 @@ namespace client
             return false;
         }
 
-        // Kalan vekil yanıt baytlarını (BND.ADDR ve BND.PORT) güvenle tüket
-        if (resp_header[3] == 0x01) // IPv4
+        if (resp_header[3] == 0x01)
         {
             uint8_t dummy[6];
             asio::read(socket, asio::buffer(dummy), ec);
         }
-        else if (resp_header[3] == 0x03) // Alan adı
+        else if (resp_header[3] == 0x03)
         {
             uint8_t len = 0;
             asio::read(socket, asio::buffer(&len, 1), ec);
             std::vector<uint8_t> dummy(len + 2);
             asio::read(socket, asio::buffer(dummy), ec);
         }
-        else if (resp_header[3] == 0x04) // IPv6
+        else if (resp_header[3] == 0x04)
         {
             uint8_t dummy[18];
             asio::read(socket, asio::buffer(dummy), ec);
@@ -154,7 +166,6 @@ namespace client
             ws.handshake(host_header, "/ws");
             AppLog::info("WebSocket baglantisi aktif. Oturum: " + username_);
 
-            // Başlangıç odasına katılım (Eğer kullanıcı açıkça -r verdiyse)
             const int64_t init_room = current_room_id_.load(std::memory_order_relaxed);
             if (init_room > 0)
             {
@@ -162,6 +173,7 @@ namespace client
                     {"action", "join"},
                     {"room_id", init_room},
                     {"username", username_}};
+                std::lock_guard<std::mutex> w_lock(write_mtx_);
                 ws.text(true);
                 ws.write(asio::buffer(join_req.dump()));
             }
@@ -171,11 +183,11 @@ namespace client
                 std::cout << "\n=======================================================\n"
                           << " CANLI CHAT OTURUMU (" << (use_tor_ ? "TOR VEKILI" : "DOGRADAN TCP") << ")\n"
                           << " Durum   : " << (init_room > 0 ? ("Oda #" + std::to_string(init_room)) : "LOBI (Bosta)") << "\n"
-                          << " Komutlar: /join <id>, /leave, /room, /help, exit\n"
+                          << " Komutlar: /join <id> [sifre], /key <sifre>, /leave, /room, /help, exit\n"
                           << "=======================================================\n";
                 if (init_room <= 0)
                 {
-                    std::cout << "[Bilgi] Sunucuya baglisiniz (Cevrim ici). Bir odaya katilmak icin: /join <oda_id>\n\n";
+                    std::cout << "[Bilgi] Sunucuya baglisiniz. Odaya katilmak icin: /join <oda_id> [sifre]\n\n";
                 }
                 else
                 {
@@ -185,7 +197,6 @@ namespace client
 
             std::atomic<bool> is_running{true};
 
-            // Eşzamanlı Dinleyici İş Parçacığı (Reader Thread)
             std::thread reader_thread([&]()
                                       {
                 try
@@ -217,13 +228,63 @@ namespace client
                             if (type == "chat_message")
                             {
                                 const std::string user = res_json.value("username", "Anonim");
-                                const std::string msg = res_json.value("message", "");
+                                const std::string raw_msg = res_json.value("message", "");
                                 const std::string time_str = res_json.value("timestamp", "--:--:--");
                                 const int64_t r_id = res_json.value("room_id", int64_t{0});
 
-                                if (user != username_)
+                                if (user == username_)
+                                    continue;
+
+                                std::string display_msg = raw_msg;
+                                bool was_e2ee = false;
+                                bool decrypt_ok = false;
+
+                                try
                                 {
-                                    print_line("[" + time_str + "] [Oda #" + std::to_string(r_id) + "] " + user + ": " + msg);
+                                    auto enc_test = json::parse(raw_msg);
+                                    if (enc_test.is_object() && enc_test.value("e2ee", false))
+                                    {
+                                        was_e2ee = true;
+                                        crypto::EncryptedPayload payload{
+                                            enc_test.value("c", ""),
+                                            enc_test.value("iv", ""),
+                                            enc_test.value("tag", "")};
+
+                                        std::vector<uint8_t> key_copy;
+                                        {
+                                            std::lock_guard<std::mutex> k_lock(key_mtx_);
+                                            key_copy = current_room_key_;
+                                        }
+
+                                        if (!key_copy.empty())
+                                        {
+                                            auto plain = crypto::CryptoService::decrypt(payload, key_copy);
+                                            if (plain.has_value())
+                                            {
+                                                display_msg = *plain;
+                                                decrypt_ok = true;
+                                            }
+                                        }
+                                    }
+                                }
+                                catch (...)
+                                {
+                                }
+
+                                if (was_e2ee)
+                                {
+                                    if (decrypt_ok)
+                                    {
+                                        print_line("[" + time_str + "] [Oda #" + std::to_string(r_id) + " (E2EE)] " + user + ": " + display_msg);
+                                    }
+                                    else
+                                    {
+                                        print_line("[" + time_str + "] [Oda #" + std::to_string(r_id) + "] " + user + ": [Kilitli Mesaj - Oda sifresi eslesmiyor]");
+                                    }
+                                }
+                                else
+                                {
+                                    print_line("[" + time_str + "] [Oda #" + std::to_string(r_id) + " (Acik)] " + user + ": " + display_msg);
                                 }
                             }
                             else if (type == "joined_room")
@@ -237,7 +298,11 @@ namespace client
                             else if (type == "left_room")
                             {
                                 current_room_id_.store(-1, std::memory_order_release);
-                                print_line("[Sistem] Odadan cikildi. Su an lobi modundasiniz (/join <id> ile odaya katilabilirsiniz).");
+                                {
+                                    std::lock_guard<std::mutex> k_lock(key_mtx_);
+                                    current_room_key_.clear();
+                                }
+                                print_line("[Sistem] Odadan cikildi. Lobi modundasiniz.");
                             }
                             else if (type == "system")
                             {
@@ -264,6 +329,10 @@ namespace client
                                 else if (event == "room_deleted")
                                 {
                                     current_room_id_.store(-1, std::memory_order_release);
+                                    {
+                                        std::lock_guard<std::mutex> k_lock(key_mtx_);
+                                        current_room_key_.clear();
+                                    }
                                     print_line("[Uyari] Bulundugunuz oda silindi! Lobi moduna dondunuz.");
                                 }
                             }
@@ -281,7 +350,6 @@ namespace client
                 {
                 } });
 
-            // Ana İstemci Giriş Döngüsü
             std::string line;
             while (is_running.load(std::memory_order_relaxed))
             {
@@ -305,7 +373,6 @@ namespace client
                     break;
                 }
 
-                // Komut İşleme Bloğu
                 if (line[0] == '/')
                 {
                     std::istringstream iss(line);
@@ -317,27 +384,64 @@ namespace client
                         int64_t target_room = 0;
                         if (iss >> target_room && target_room > 0)
                         {
+                            std::string pass;
+                            iss >> pass;
+
+                            {
+                                std::lock_guard<std::mutex> k_lock(key_mtx_);
+                                if (!pass.empty())
+                                {
+                                    current_room_key_ = crypto::CryptoService::derive_key(pass);
+                                    print_line("[E2EE] '" + pass + "' parolasi ile AES-256 anahtari aktif edildi.");
+                                }
+                                else
+                                {
+                                    current_room_key_.clear();
+                                    print_line("[Uyari] Parola girilmedi; bu odadaki mesajlar acik (sifresiz) iletilecek.");
+                                }
+                            }
+
                             json join_msg = {
                                 {"action", "join"},
                                 {"room_id", target_room},
                                 {"username", username_}};
                             boost::system::error_code ec;
-                            ws.text(true);
-                            ws.write(asio::buffer(join_msg.dump()), ec);
+                            {
+                                std::lock_guard<std::mutex> w_lock(write_mtx_);
+                                ws.text(true);
+                                ws.write(asio::buffer(join_msg.dump()), ec);
+                            }
                             if (ec)
                                 break;
                         }
                         else
                         {
-                            print_line("[Kullanim] /join <oda_id> (Orn: /join 2)");
+                            print_line("[Kullanim] /join <oda_id> [parola] (Orn: /join 1 gizli123)");
+                        }
+                    }
+                    else if (cmd == "/key")
+                    {
+                        std::string new_pass;
+                        if (iss >> new_pass && !new_pass.empty())
+                        {
+                            std::lock_guard<std::mutex> k_lock(key_mtx_);
+                            current_room_key_ = crypto::CryptoService::derive_key(new_pass);
+                            print_line("[E2EE] Oda sifreleme anahtari guncellendi: '" + new_pass + "'");
+                        }
+                        else
+                        {
+                            print_line("[Kullanim] /key <yeni_parola>");
                         }
                     }
                     else if (cmd == "/leave")
                     {
                         json leave_msg = {{"action", "leave"}};
                         boost::system::error_code ec;
-                        ws.text(true);
-                        ws.write(asio::buffer(leave_msg.dump()), ec);
+                        {
+                            std::lock_guard<std::mutex> w_lock(write_mtx_);
+                            ws.text(true);
+                            ws.write(asio::buffer(leave_msg.dump()), ec);
+                        }
                         if (ec)
                             break;
                     }
@@ -345,18 +449,29 @@ namespace client
                     {
                         const int64_t current = current_room_id_.load(std::memory_order_relaxed);
                         if (current > 0)
-                            print_line("[Durum] Bagli bulunulan oda: #" + std::to_string(current));
+                        {
+                            bool has_key = false;
+                            {
+                                std::lock_guard<std::mutex> k_lock(key_mtx_);
+                                has_key = !current_room_key_.empty();
+                            }
+                            print_line("[Durum] Bagli bulunulan oda: #" + std::to_string(current) +
+                                       (has_key ? " [E2EE Sifreli]" : " [Acik Metin]"));
+                        }
                         else
+                        {
                             print_line("[Durum] Herhangi bir odaya bagli degilsiniz (Lobi modundasiniz).");
+                        }
                     }
                     else if (cmd == "/help")
                     {
                         print_line("Kullanilabilir komutlar:\n"
-                                   "  /join <id>  : Belirtilen odaya gecis yapar\n"
-                                   "  /leave      : Odadan ayrilarak lobi moduna gecer\n"
-                                   "  /room       : Mevcut oda bilgisini gosterir\n"
-                                   "  /help       : Bu yardim menusunu basar\n"
-                                   "  exit, quit  : Programi guvenle sonlandirir");
+                                   "  /join <id> [sifre] : Belirtilen odaya (istege bagli E2EE parolasiyla) katilir\n"
+                                   "  /key <sifre>       : Mevcut odanin sifreleme anahtarini belirler/degistirir\n"
+                                   "  /leave             : Odadan ayrilarak lobi moduna doner\n"
+                                   "  /room              : Mevcut oda ve sifreleme durumunu gosterir\n"
+                                   "  /help              : Bu yardim menusunu basar\n"
+                                   "  exit, quit         : Programi guvenle sonlandirir");
                     }
                     else
                     {
@@ -365,23 +480,43 @@ namespace client
                     continue;
                 }
 
-                // Normal Mesaj Gönderimi
                 const int64_t active_room = current_room_id_.load(std::memory_order_relaxed);
                 if (active_room <= 0)
                 {
-                    print_line("[Uyari] Mesaj iletmek icin bir odaya girmelisiniz: /join <id>");
+                    print_line("[Uyari] Mesaj iletmek icin bir odaya girmelisiniz: /join <id> [sifre]");
                     continue;
+                }
+
+                std::string outgoing_msg = line;
+                {
+                    std::lock_guard<std::mutex> k_lock(key_mtx_);
+                    if (!current_room_key_.empty())
+                    {
+                        auto enc = crypto::CryptoService::encrypt(line, current_room_key_);
+                        if (enc.has_value())
+                        {
+                            json enc_payload = {
+                                {"e2ee", true},
+                                {"c", enc->ciphertext_base64},
+                                {"iv", enc->iv_base64},
+                                {"tag", enc->tag_base64}};
+                            outgoing_msg = enc_payload.dump();
+                        }
+                    }
                 }
 
                 json req_payload = {
                     {"action", "message"},
                     {"room_id", active_room},
                     {"username", username_},
-                    {"message", line}};
+                    {"message", outgoing_msg}};
 
                 boost::system::error_code ec;
-                ws.text(true);
-                ws.write(asio::buffer(req_payload.dump()), ec);
+                {
+                    std::lock_guard<std::mutex> w_lock(write_mtx_);
+                    ws.text(true);
+                    ws.write(asio::buffer(req_payload.dump()), ec);
+                }
                 if (ec)
                 {
                     AppLog::error("Ileti transfer hatasi: " + ec.message());
@@ -391,10 +526,12 @@ namespace client
 
             is_running.store(false, std::memory_order_release);
 
-            // Soket Bağlantısını Güvenle Kapatma
             boost::system::error_code ec;
-            beast::get_lowest_layer(ws).socket().shutdown(tcp::socket::shutdown_both, ec);
-            beast::get_lowest_layer(ws).socket().close(ec);
+            {
+                std::lock_guard<std::mutex> w_lock(write_mtx_);
+                beast::get_lowest_layer(ws).socket().shutdown(tcp::socket::shutdown_both, ec);
+                beast::get_lowest_layer(ws).socket().close(ec);
+            }
 
             if (reader_thread.joinable())
             {

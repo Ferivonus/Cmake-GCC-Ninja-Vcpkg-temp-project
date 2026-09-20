@@ -39,6 +39,9 @@ namespace backend
         bool init(const std::string &db_path = "app_chat.db");
         bool ping();
 
+        // Varsayılan oda oluşturucu
+        int64_t ensure_default_room(const std::string &name = "Konuşma Odası");
+
         // Oda CRUD operasyonları
         int64_t create_room(const std::string &name, const std::string &timestamp);
         std::vector<Room> get_rooms();

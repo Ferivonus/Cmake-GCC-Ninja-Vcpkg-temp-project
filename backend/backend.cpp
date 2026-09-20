@@ -2,10 +2,9 @@
 #include "backend/http_handler.hpp"
 #include "backend/ws_handler.hpp"
 #include "config/app_config.hpp"
-#include <thread>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
-#include <boost/beast/websocket.hpp>
+#include <boost/asio/strand.hpp>
 
 namespace backend
 {
@@ -15,72 +14,113 @@ namespace backend
     namespace websocket = beast::websocket;
     using tcp = asio::ip::tcp;
 
-    CloudServer::CloudServer(const std::string &address, unsigned short port)
-        : address_str_(address), port_(port), state_(std::make_shared<ServerState>())
+    // HTTP isteklerini asenkron yöneten oturum sınıfı
+    class HttpSession : public std::enable_shared_from_this<HttpSession>
     {
-        state_->db_service.init("app_chat.db");
+    public:
+        HttpSession(tcp::socket &&socket, std::shared_ptr<ServerState> state)
+            : stream_(std::move(socket)), state_(std::move(state))
+        {
+        }
+
+        void run()
+        {
+            do_read();
+        }
+
+    private:
+        void do_read()
+        {
+            req_ = {};
+            stream_.expires_after(std::chrono::seconds(30));
+
+            http::async_read(
+                stream_, buffer_, req_,
+                [self = shared_from_this()](beast::error_code ec, std::size_t)
+                {
+                    if (ec == http::error::end_of_stream)
+                    {
+                        self->stream_.socket().shutdown(tcp::socket::shutdown_send, ec);
+                        return;
+                    }
+                    if (ec)
+                        return;
+
+                    // Eğer WebSocket Upgrade isteğiyse WsSession'a devret
+                    if (websocket::is_upgrade(self->req_))
+                    {
+                        auto ws_session = std::make_shared<WsSession>(self->stream_.release_socket(), self->state_);
+                        ws_session->run(std::move(self->req_));
+                        return;
+                    }
+
+                    // Standart HTTP isteği
+                    auto res = handle_http_request(std::move(self->req_), self->state_);
+                    auto is_keep_alive = res.keep_alive();
+
+                    http::async_write(
+                        self->stream_, res,
+                        [self, is_keep_alive](beast::error_code ec, std::size_t)
+                        {
+                            if (ec || !is_keep_alive)
+                            {
+                                self->stream_.socket().shutdown(tcp::socket::shutdown_send, ec);
+                                return;
+                            }
+                            self->do_read();
+                        });
+                });
+        }
+
+        beast::tcp_stream stream_;
+        std::shared_ptr<ServerState> state_;
+        beast::flat_buffer buffer_;
+        http::request<http::string_body> req_;
+    };
+
+    // --- CloudServer Implementasyonu ---
+
+    CloudServer::CloudServer(const std::string &address, unsigned short port)
+        : address_str_(address),
+          port_(port),
+          state_(std::make_shared<ServerState>()),
+          ioc_(static_cast<int>(std::max(1u, std::thread::hardware_concurrency()))),
+          acceptor_(ioc_)
+    {
+        if (state_->db_service.init("app_chat.db"))
+        {
+            state_->db_service.ensure_default_room("Konuşma Odası");
+        }
     }
 
-    void CloudServer::handle_session(tcp::socket socket)
+    CloudServer::~CloudServer()
     {
-        try
+        ioc_.stop();
+        for (auto &t : thread_pool_)
         {
-            beast::tcp_stream stream(std::move(socket));
+            if (t.joinable())
+                t.join();
+        }
+    }
 
-            for (;;)
+    void CloudServer::do_accept()
+    {
+        acceptor_.async_accept(
+            asio::make_strand(ioc_),
+            [this](beast::error_code ec, tcp::socket socket)
             {
-                beast::flat_buffer buffer;
-                http::request<http::string_body> req;
-
-                beast::error_code ec;
-                http::read(stream, buffer, req, ec);
-
-                if (ec == http::error::end_of_stream)
+                if (!ec)
                 {
-                    break; // Client baglantiyi duzgunce kapatti
+                    std::make_shared<HttpSession>(std::move(socket), state_)->run();
                 }
-                if (ec)
+                else
                 {
-                    throw beast::system_error{ec};
+                    AppLog::error("Bağlantı kabul hatası: " + ec.message());
                 }
 
-                if (websocket::is_upgrade(req))
-                {
-                    handle_websocket_session(std::move(stream), std::move(req), state_);
-                    return; // WS oturumu kendi dongusunu yonetir, HTTP dongusune geri donulmez
-                }
-
-                AppLog::info("HTTP " + std::string(req.method_string()) + " " + std::string(req.target()));
-
-                const bool keep_alive = req.keep_alive();
-                auto res = handle_http_request(std::move(req), state_);
-
-                http::write(stream, res, ec);
-                if (ec)
-                {
-                    throw beast::system_error{ec};
-                }
-
-                if (!keep_alive)
-                {
-                    break;
-                }
-            }
-
-            beast::error_code shutdown_ec;
-            stream.socket().shutdown(tcp::socket::shutdown_send, shutdown_ec);
-        }
-        catch (const beast::system_error &se)
-        {
-            if (se.code() != websocket::error::closed && se.code() != http::error::end_of_stream)
-            {
-                AppLog::error("Soket istisnasi: " + std::string(se.what()));
-            }
-        }
-        catch (const std::exception &e)
-        {
-            AppLog::error("Oturum hatasi: " + std::string(e.what()));
-        }
+                // Bir sonraki bağlantıyı kabul etmek için dinlemeye devam et
+                do_accept();
+            });
     }
 
     void CloudServer::run()
@@ -88,44 +128,37 @@ namespace backend
         try
         {
             auto const address = asio::ip::make_address(address_str_);
-            asio::io_context ioc{1};
-
             tcp::endpoint endpoint{address, port_};
-            tcp::acceptor acceptor{ioc};
-            acceptor.open(endpoint.protocol());
-            acceptor.set_option(asio::socket_base::reuse_address(true));
-            acceptor.bind(endpoint);
-            acceptor.listen();
 
-            AppLog::info("Sunucu dinlemede -> http://" + address_str_ + ":" + std::to_string(port_));
-            AppLog::info("Health Check   : GET /health");
-            AppLog::info("Oda Yonetimi   : GET, POST /api/rooms");
-            AppLog::info("Oda CRUD       : GET, PUT, DELETE /api/rooms/{id}");
-            AppLog::info("Mesaj Gecmisi  : GET /api/rooms/{id}/messages");
-            AppLog::info("Konfigurasyon  : GET, POST, DELETE /api/config");
-            AppLog::info("WebSocket      : ws://" + address_str_ + ":" + std::to_string(port_) + "/ws");
+            acceptor_.open(endpoint.protocol());
+            acceptor_.set_option(asio::socket_base::reuse_address(true));
+            acceptor_.bind(endpoint);
+            acceptor_.listen();
 
-            while (true)
+            AppLog::info("Asenkron Sunucu Dinlemede -> http://" + address_str_ + ":" + std::to_string(port_));
+            AppLog::info("WebSocket Endpoint     -> ws://" + address_str_ + ":" + std::to_string(port_) + "/ws");
+
+            do_accept();
+
+            // İş parçacığı havuzunu başlat
+            unsigned int thread_count = std::max(1u, std::thread::hardware_concurrency());
+            AppLog::info("İş parçacığı havuzu başlatıldı (" + std::to_string(thread_count) + " thread).");
+
+            thread_pool_.reserve(thread_count);
+            for (unsigned int i = 0; i < thread_count; ++i)
             {
-                tcp::socket socket{ioc};
-                acceptor.accept(socket);
+                thread_pool_.emplace_back([this]()
+                                          { ioc_.run(); });
+            }
 
-                boost::system::error_code ep_ec;
-                const auto remote_ep = socket.remote_endpoint(ep_ec);
-                const std::string remote_str = ep_ec
-                                                   ? "bilinmeyen"
-                                                   : (remote_ep.address().to_string() + ":" + std::to_string(remote_ep.port()));
-                AppLog::info("Yeni baglanti kabul edildi <- " + remote_str);
-
-                std::thread([this, s = std::move(socket)]() mutable
-                            { this->handle_session(std::move(s)); })
-                    .detach();
+            for (auto &t : thread_pool_)
+            {
+                t.join();
             }
         }
         catch (const std::exception &e)
         {
-            AppLog::error("Sunucu calisma hatasi: " + std::string(e.what()));
+            AppLog::error("Sunucu çalışma hatası: " + std::string(e.what()));
         }
     }
-
-} // namespace backend
+}
