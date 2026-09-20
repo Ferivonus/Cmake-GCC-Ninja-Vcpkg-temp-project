@@ -28,7 +28,7 @@ namespace backend
         return std::string(buffer);
     }
 
-    // Inline ServerState implementasyonları
+    // --- ServerState Metot Implementasyonları ---
     void ServerState::add_session(std::shared_ptr<WsSession> session)
     {
         std::lock_guard<std::mutex> lock(sessions_mtx);
@@ -88,7 +88,6 @@ namespace backend
 
     WsSession::WsSession(asio::ip::tcp::socket &&socket, std::shared_ptr<ServerState> state)
         : ws_(std::move(socket)),
-          strand_(ws_.get_executor()),
           state_(std::move(state))
     {
         boost::system::error_code ec;
@@ -118,32 +117,28 @@ namespace backend
         // WebSocket el sıkışması (handshake)
         ws_.async_accept(
             req,
-            asio::bind_executor(
-                strand_,
-                [self = shared_from_this()](beast::error_code ec)
+            [self = shared_from_this()](beast::error_code ec)
+            {
+                if (ec)
                 {
-                    if (ec)
-                    {
-                        AppLog::error("WS Handshake hatasi: " + ec.message());
-                        return;
-                    }
+                    AppLog::error("WS Handshake hatasi: " + ec.message());
+                    return;
+                }
 
-                    AppLog::info("WebSocket baglantisi kuruldu: " + self->remote_str_);
-                    self->state_->add_session(self);
-                    self->do_read();
-                }));
+                AppLog::info("WebSocket baglantisi kuruldu: " + self->remote_str_);
+                self->state_->add_session(self);
+                self->do_read();
+            });
     }
 
     void WsSession::do_read()
     {
         ws_.async_read(
             buffer_,
-            asio::bind_executor(
-                strand_,
-                [self = shared_from_this()](beast::error_code ec, std::size_t bytes_transferred)
-                {
-                    self->on_read(ec, bytes_transferred);
-                }));
+            [self = shared_from_this()](beast::error_code ec, std::size_t bytes_transferred)
+            {
+                self->on_read(ec, bytes_transferred);
+            });
     }
 
     void WsSession::on_read(beast::error_code ec, std::size_t)
@@ -165,7 +160,7 @@ namespace backend
         buffer_.consume(buffer_.size());
 
         handle_payload(incoming);
-        do_read(); // Bir sonraki mesajı dinle
+        do_read(); // Bir sonraki mesajı dinlemeye devam et
     }
 
     void WsSession::handle_payload(const std::string &incoming)
@@ -255,7 +250,7 @@ namespace backend
                     state_->broadcast_to_room(prev_room, broadcast_leave.dump());
                 }
             }
-            // 3. Mesaj İletimi & Kripto Entegrasyonu
+            // 3. Mesaj İletimi & At-Rest Şifreleme
             else if (action == "message")
             {
                 int64_t target_room = get_room_id();
@@ -277,7 +272,7 @@ namespace backend
                     std::string msg = data["message"].get<std::string>();
                     std::string timestamp = get_current_timestamp();
 
-                    // --- KRİPTO ENTEGRASYONU: Mesajı Veritabanında Şifreli Saklama ---
+                    // Veritabanı için AES-256-GCM ile saklama
                     std::string storage_text = msg;
                     auto encrypted = crypto::CryptoService::encrypt(msg, state_->db_cipher_key);
                     if (encrypted)
@@ -292,7 +287,6 @@ namespace backend
 
                     int64_t msg_id = state_->db_service.save_message(target_room, user, storage_text, timestamp);
 
-                    // Odadaki diğer kullanıcılara canlı yayında mesajı ilet
                     json broadcast_json = {
                         {"type", "chat_message"},
                         {"id", msg_id},
@@ -315,15 +309,14 @@ namespace backend
         }
     }
 
-    // Strand ile korunan Asenkron Yazma Fonksiyonu
     void WsSession::send(const std::string &message)
     {
+        // Kuyruk ekleme ve yazma tetikleme işini soketin yürütücüsüne (strand) post ediyoruz
         asio::post(
-            strand_,
+            ws_.get_executor(),
             [self = shared_from_this(), message]()
             {
                 self->write_queue_.push_back(message);
-                // Eğer sırada sadece bu mesaj varsa yazma döngüsünü başlat
                 if (self->write_queue_.size() == 1)
                 {
                     self->do_write();
@@ -336,24 +329,21 @@ namespace backend
         ws_.text(true);
         ws_.async_write(
             asio::buffer(write_queue_.front()),
-            asio::bind_executor(
-                strand_,
-                [self = shared_from_this()](beast::error_code ec, std::size_t)
+            [self = shared_from_this()](beast::error_code ec, std::size_t)
+            {
+                if (ec)
                 {
-                    if (ec)
-                    {
-                        AppLog::error("WS Yazma hatasi: " + ec.message());
-                        self->cleanup();
-                        return;
-                    }
+                    AppLog::error("WS Yazma hatasi: " + ec.message());
+                    self->cleanup();
+                    return;
+                }
 
-                    self->write_queue_.pop_front();
-                    // Kuyrukta gönderilecek başka mesaj varsa devam et
-                    if (!self->write_queue_.empty())
-                    {
-                        self->do_write();
-                    }
-                }));
+                self->write_queue_.pop_front();
+                if (!self->write_queue_.empty())
+                {
+                    self->do_write();
+                }
+            });
     }
 
     void WsSession::cleanup()

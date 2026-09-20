@@ -1,7 +1,7 @@
 #pragma once
 #include <boost/beast/core.hpp>
 #include <boost/beast/websocket.hpp>
-#include <boost/asio/strand.hpp>
+#include <boost/asio/ip/tcp.hpp>
 #include <memory>
 #include <deque>
 #include <string>
@@ -34,7 +34,6 @@ namespace backend
         void cleanup();
 
         boost::beast::websocket::stream<boost::beast::tcp_stream> ws_;
-        boost::asio::strand<boost::asio::any_io_executor> strand_;
         std::shared_ptr<ServerState> state_;
         boost::beast::flat_buffer buffer_;
         std::deque<std::string> write_queue_;
