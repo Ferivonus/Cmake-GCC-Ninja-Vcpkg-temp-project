@@ -12,6 +12,26 @@ TEST_CASE("DbService SQLite CRUD, Iliski ve Guvenlik Testleri", "[db][sqlite]")
         CHECK(db.ping());
     }
 
+    SECTION("Varsayilan baslangic odasi kontrolu (ensure_default_room) dogru calismali")
+    {
+        DbService db;
+        REQUIRE(db.init(":memory:"));
+
+        // 1. Veritabanı boşken 1 numaralı varsayılan odayı oluşturmalı
+        int64_t def_id = db.ensure_default_room("Konuşma Odası");
+        CHECK(def_id == 1);
+
+        auto room = db.get_room(1);
+        REQUIRE(room.has_value());
+        CHECK(room->name == "Konuşma Odası");
+        CHECK(room->is_open == true);
+
+        // 2. Odalar varken tekrar çağrıldığında yeni oda eklememeli (0 dönmeli)
+        int64_t second_call = db.ensure_default_room("Konuşma Odası");
+        CHECK(second_call == 0);
+        CHECK(db.get_rooms().size() == 1);
+    }
+
     SECTION("Oda CRUD operasyonlari eksiksiz calismali")
     {
         DbService db;
@@ -55,7 +75,7 @@ TEST_CASE("DbService SQLite CRUD, Iliski ve Guvenlik Testleri", "[db][sqlite]")
         CHECK(db.get_rooms().size() == 1);
     }
 
-    SECTION("Mesaj kaydi ve Foreign Key kisiti dogrulanmali")
+    SECTION("Mesaj kaydi, limitleme ve Foreign Key kisiti dogrulanmali")
     {
         DbService db;
         REQUIRE(db.init(":memory:"));
@@ -64,17 +84,18 @@ TEST_CASE("DbService SQLite CRUD, Iliski ve Guvenlik Testleri", "[db][sqlite]")
         int64_t room_id = db.create_room("Yazilim Odasi", ts);
         REQUIRE(room_id > 0);
 
-        // Gecerli odaya mesaj ekleme
-        int64_t id1 = db.save_message(room_id, "Ahmet", "Ilk mesaj", ts);
-        CHECK(id1 == 1);
+        // Gecerli odaya 4 adet mesaj ekleme
+        for (int i = 1; i <= 4; ++i)
+        {
+            int64_t m_id = db.save_message(room_id, "User" + std::to_string(i), "Mesaj " + std::to_string(i), ts);
+            CHECK(m_id == i);
+        }
 
-        int64_t id2 = db.save_message(room_id, "Mehmet", "Ikinci mesaj", "2026-09-19 12:10:05");
-        CHECK(id2 == 2);
-
-        auto messages = db.get_room_messages(room_id);
-        REQUIRE(messages.size() == 2);
-        CHECK(messages[0].username == "Ahmet");
-        CHECK(messages[1].username == "Mehmet");
+        // Limit parametresi ile son 2 mesajı isteme
+        auto limited_messages = db.get_room_messages(room_id, 2);
+        REQUIRE(limited_messages.size() == 2);
+        CHECK(limited_messages[0].username == "User3");
+        CHECK(limited_messages[1].username == "User4");
 
         // Gecersiz (var olmayan) bir odaya mesaj ekleme -> Foreign Key hatasi ile -1 donmeli
         int64_t invalid_room_msg = db.save_message(9999, "Hacker", "Yetkisiz mesaj", ts);
@@ -93,7 +114,6 @@ TEST_CASE("DbService SQLite CRUD, Iliski ve Guvenlik Testleri", "[db][sqlite]")
         db.save_message(room_id, "Veli", "Test mesaji 2", "2026-09-19 12:15:02");
         REQUIRE(db.get_room_messages(room_id).size() == 2);
 
-        // Oda silindiginde bagli mesajlar da otomatik silinmeli
         REQUIRE(db.delete_room(room_id));
         CHECK(db.get_room_messages(room_id).empty());
     }

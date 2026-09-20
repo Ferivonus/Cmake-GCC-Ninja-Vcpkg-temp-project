@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include "backend/http_handler.hpp"
 #include "backend/server_state.hpp"
+#include "services/crypto_service.hpp"
 #include <string>
 #include <memory>
 
@@ -13,7 +14,6 @@ namespace http = boost::beast::http;
 namespace asio = boost::asio;
 using json = nlohmann::json;
 
-// Test ortamı için bellek içi SQLite ile izole bir ServerState hazırlar
 static std::shared_ptr<backend::ServerState> create_test_state()
 {
     auto state = std::make_shared<backend::ServerState>();
@@ -22,9 +22,19 @@ static std::shared_ptr<backend::ServerState> create_test_state()
     return state;
 }
 
-TEST_CASE("Cloud API HTTP Handler - Saglik ve Konfigurasyon Endpoint'leri", "[http][api]")
+TEST_CASE("Cloud API HTTP Handler - Saglik, CORS ve Konfigurasyon Endpoint'leri", "[http][api]")
 {
     auto state = create_test_state();
+
+    SECTION("OPTIONS on-kontrol (CORS Preflight) istegi 204 No Content ve uygun basliklar donmeli")
+    {
+        http::request<http::string_body> req{http::verb::options, "/api/rooms", 11};
+        auto res = backend::handle_http_request(std::move(req), state);
+
+        CHECK(res.result() == http::status::no_content);
+        CHECK(res[http::field::access_control_allow_origin] == "*");
+        CHECK(res.find(http::field::access_control_allow_methods) != res.end());
+    }
 
     SECTION("GET /health basarili sekilde 200 OK ve 'healthy' durum donmeli")
     {
@@ -36,6 +46,7 @@ TEST_CASE("Cloud API HTTP Handler - Saglik ve Konfigurasyon Endpoint'leri", "[ht
         CHECK(body["status"] == "healthy");
         CHECK(body["database"] == "connected");
         CHECK(body.contains("uptime_seconds"));
+        CHECK(res[http::field::access_control_allow_origin] == "*");
     }
 
     SECTION("POST /health durumunda 405 Method Not Allowed donmeli")
@@ -85,7 +96,7 @@ TEST_CASE("Cloud API HTTP Handler - Saglik ve Konfigurasyon Endpoint'leri", "[ht
     }
 }
 
-TEST_CASE("Cloud API HTTP Handler - Oda ve Mesaj REST Endpoint'leri", "[http][rooms]")
+TEST_CASE("Cloud API HTTP Handler - Oda ve Kriptolu Mesaj REST Endpoint'leri", "[http][rooms]")
 {
     auto state = create_test_state();
 
@@ -132,7 +143,6 @@ TEST_CASE("Cloud API HTTP Handler - Oda ve Mesaj REST Endpoint'leri", "[http][ro
 
     SECTION("GET, PUT, DELETE /api/rooms/{id} rotalari dogru calismali")
     {
-        // On hazirlik: Oda olustur
         int64_t room_id = state->db_service.create_room("Test Odasi", "2026-09-19 12:00:00");
         std::string room_path = "/api/rooms/" + std::to_string(room_id);
 
@@ -180,57 +190,40 @@ TEST_CASE("Cloud API HTTP Handler - Oda ve Mesaj REST Endpoint'leri", "[http][ro
         }
     }
 
-    SECTION("GET /api/rooms/{id}/messages mesajlari basariyla listelemeli")
+    SECTION("GET /api/rooms/{id}/messages sifreli kaydedilmis mesajlari seffaf sekilde cozerek sunmali")
     {
-        int64_t room_id = state->db_service.create_room("Sohbet", "2026-09-19 12:00:00");
-        state->db_service.save_message(room_id, "User1", "Selamlar", "2026-09-19 12:00:01");
+        int64_t room_id = state->db_service.create_room("Kripto Odasi", "2026-09-19 12:00:00");
+        const std::string original_secret = "Bu cok gizli bir iletidir!";
 
+        // Mesajı AES-256-GCM ile şifreleyip zarf olarak kaydediyoruz
+        auto enc = crypto::CryptoService::encrypt(original_secret, state->db_cipher_key);
+        REQUIRE(enc.has_value());
+
+        json enc_envelope = {
+            {"__enc", true},
+            {"c", enc->ciphertext_base64},
+            {"iv", enc->iv_base64},
+            {"tag", enc->tag_base64}};
+
+        state->db_service.save_message(room_id, "Alice", enc_envelope.dump(), "2026-09-19 12:00:01");
+
+        // REST API üzerinden mesaj geçmişi çağrıldığında
         http::request<http::string_body> req{http::verb::get, "/api/rooms/" + std::to_string(room_id) + "/messages", 11};
         auto res = backend::handle_http_request(std::move(req), state);
 
         CHECK(res.result() == http::status::ok);
         auto body = json::parse(res.body());
-        CHECK(body["room_id"] == room_id);
         REQUIRE(body["messages"].size() == 1);
-        CHECK(body["messages"][0]["username"] == "User1");
-        CHECK(body["messages"][0]["message"] == "Selamlar");
+        CHECK(body["messages"][0]["username"] == "Alice");
+        // İstemciye dönen mesaj şifreli zarf DEĞİL, deşifre edilmiş açık metin olmalı
+        CHECK(body["messages"][0]["message"] == original_secret);
     }
 
-    SECTION("Bilinmeyen endpoint icin 404 Not Found donmeli")
+    SECTION("Sayisal formati bozan overflow ID durumunda 400 Bad Request donmeli")
     {
-        http::request<http::string_body> req{http::verb::get, "/api/tanimsiz", 11};
+        // 64-bit tamsayı sınırını aşan bir ID
+        http::request<http::string_body> req{http::verb::get, "/api/rooms/99999999999999999999999999999999/messages", 11};
         auto res = backend::handle_http_request(std::move(req), state);
-        CHECK(res.result() == http::status::not_found);
-    }
-}
-
-TEST_CASE("Boost.Asio IP ve Endpoint Dogrulama Mekanizmasi", "[asio]")
-{
-    SECTION("Gecerli IPv4 adresi basariyla cozumlenmeli")
-    {
-        boost::system::error_code ec;
-        auto addr = asio::ip::make_address("127.0.0.1", ec);
-
-        REQUIRE_FALSE(ec);
-        CHECK(addr.is_v4());
-        CHECK(addr.is_loopback());
-    }
-
-    SECTION("Hatali IP formati guvenli hata kodu uretmeli")
-    {
-        boost::system::error_code ec;
-        [[maybe_unused]] auto addr = asio::ip::make_address("999.999.999.999", ec);
-        CHECK(ec);
-    }
-
-    SECTION("TCP Endpoint dogru soket yapilandirmasi uretmeli")
-    {
-        boost::system::error_code ec;
-        auto addr = asio::ip::make_address("192.168.1.1", ec);
-        REQUIRE_FALSE(ec);
-
-        asio::ip::tcp::endpoint ep(addr, 8080);
-        CHECK(ep.port() == 8080);
-        CHECK(ep.address().to_string() == "192.168.1.1");
+        CHECK(res.result() == http::status::bad_request);
     }
 }

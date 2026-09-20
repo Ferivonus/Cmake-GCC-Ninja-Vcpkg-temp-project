@@ -18,6 +18,16 @@ TEST_CASE("JsonService serilestirme ve ayristirma dogrulamasi", "[json]")
         CHECK(parsed->active == true);
     }
 
+    SECTION("JsonService tasima (move) semantigi dogru calismali")
+    {
+        JsonService moved_service = std::move(service);
+        std::string raw = moved_service.serialize(config);
+        auto parsed = moved_service.deserialize(raw);
+
+        REQUIRE(parsed.has_value());
+        CHECK(parsed->port == 9000);
+    }
+
     SECTION("Turkce karakter ve JSON kacis sembolleri dogru ayristirilmali")
     {
         std::string_view unicode_json = R"({
