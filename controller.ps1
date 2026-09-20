@@ -34,6 +34,7 @@
     Odayi ve tum mesaj gecmisini kalici olarak siler.
 #>
 [CmdletBinding()]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password', Justification = 'CLI uzerinden duz metin parola aktarimi zorunludur')]
 param (
     # Yonetilecek sunucunun adresi ve portu
     [Alias("HostAddress")]
@@ -44,7 +45,7 @@ param (
     [switch]$ListRooms,
     [string]$CreateRoom = "",
     
-    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password', Justification = 'CLI uzerinden duz metin parola aktarimi zorunludur')]
     [Alias("Pass", "Key")]
     [string]$Password = "",
     
@@ -79,7 +80,7 @@ function Resolve-TargetRoomId([string]$RoomIdentifier) {
     }
 
     $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec $TimeoutSec -ErrorAction Stop
-    $found = $resp.rooms | Where-Object { $_.name -ieq $RoomIdentifier } | Select-Object -First 1
+    $found = @($resp.rooms) | Where-Object { $_.name -ieq $RoomIdentifier } | Select-Object -First 1
     if ($found) {
         return [int64]$found.id
     }
@@ -116,7 +117,7 @@ if ($IsRoomCommand) {
             Write-Host "`n>>> Odalar Listeleniyor ($BaseApiUrl/api/rooms)..." -ForegroundColor Cyan
             $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec $TimeoutSec
 
-            if ($resp.rooms.Count -eq 0) {
+            if (@($resp.rooms).Count -eq 0) {
                 Write-Host "Henuz hic oda olusturulmamis." -ForegroundColor Yellow
             }
             else {
@@ -131,8 +132,8 @@ if ($IsRoomCommand) {
         }
         elseif ($CreateRoom -ne "") {
             Write-Host "`n>>> Yeni Oda Olusturuluyor: '$CreateRoom'..." -ForegroundColor Cyan
-            $body = @{ name = $CreateRoom } | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Post -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSec
+            $body = ConvertTo-Json -InputObject @{ name = $CreateRoom }
+            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Post -ContentType "application/json" -Body $body -TimeoutSec$TimeoutSec
 
             $RoomKey = if ($Password -ne "") {
                 $Password
@@ -148,27 +149,26 @@ if ($IsRoomCommand) {
             Write-Host "E2EE Anahtari : $RoomKey" -ForegroundColor Yellow
 
             Write-Host "`n>>> Paylasilabilir Katilim Komutlari:" -ForegroundColor Cyan
-            Write-Host "  Terminalden Baglanti : .\build.ps1 -Client KullaniciAdi -Room $($resp.room_id) -Password$RoomKey" -ForegroundColor White
-            Write-Host "  Sohbet Icinden Giris : /join $($resp.room_id)$RoomKey" -ForegroundColor White
+            Write-Host "  Terminalden Baglanti : .\build.ps1 -Client KullaniciAdi -Room $($resp.room_id) -Password `"$RoomKey`"" -ForegroundColor White
+            Write-Host "  Sohbet Icinden Giris : /join $($resp.room_id) $RoomKey" -ForegroundColor White
         }
         elseif ($CloseRoom -ne "") {
-            $roomId = Resolve-TargetRoomId $CloseRoom
+            $roomId = Resolve-TargetRoomId -RoomIdentifier $CloseRoom
             Write-Host "`n>>> Oda Kapatiliyor (ID: #$roomId)..." -ForegroundColor Cyan
-            $body = @{ is_open = $false } | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Put -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSec
+            $body = ConvertTo-Json -InputObject @{ is_open = $false }$resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Put -ContentType "application/json" -Body $body -TimeoutSec$TimeoutSec
 
             Write-Host "Oda basariyla kapatildi (#$roomId - $($resp.name)). Yeni girisler engellendi." -ForegroundColor Yellow
         }
         elseif ($OpenRoom -ne "") {
-            $roomId = Resolve-TargetRoomId $OpenRoom
+            $roomId = Resolve-TargetRoomId -RoomIdentifier$OpenRoom
             Write-Host "`n>>> Oda Yeniden Aciliyor (ID: #$roomId)..." -ForegroundColor Cyan
-            $body = @{ is_open = $true } | ConvertTo-Json
+            $body = ConvertTo-Json -InputObject @{ is_open = $true }
             $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Put -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSec
 
             Write-Host "Oda basariyla erisime acildi (#$roomId - $($resp.name))." -ForegroundColor Green
         }
         elseif ($DeleteRoom -ne "") {
-            $roomId = Resolve-TargetRoomId $DeleteRoom
+            $roomId = Resolve-TargetRoomId -RoomIdentifier $DeleteRoom
             Write-Host "`n>>> Oda Siliniyor (ID: #$roomId)..." -ForegroundColor Red
             $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms/$roomId" -Method Delete -TimeoutSec $TimeoutSec
 
@@ -201,8 +201,8 @@ if ($IsConfigCommand) {
             }
 
             Write-Host "`n>>> Yapilandirma Guncelleniyor ($BaseApiUrl/api/config)..." -ForegroundColor Cyan
-            $body = @{ host = $ConfigHost; port = $ConfigPort; active = $ConfigActive } | ConvertTo-Json
-            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/config" -Method Post -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSec
+            $body = ConvertTo-Json -InputObject @{ host = $ConfigHost; port = $ConfigPort; active = $ConfigActive }
+            $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/config" -Method Post -ContentType "application/json" -Body $body -TimeoutSec$TimeoutSec
 
             Write-Host "Yapilandirma basariyla guncellendi!" -ForegroundColor Green
             $resp | Format-List
@@ -228,10 +228,18 @@ if ($IsConfigCommand) {
 # 4. Komut Verilmediyse Kullanim Bilgisi
 # -------------------------------------------------------------
 Write-Host "`n=== controller.ps1 - REST API Yonetim Araci (Hedef: $BaseApiUrl) ===" -ForegroundColor Cyan
-Write-Host "Oda (Room) Komutlari:" -ForegroundColor Yellow
+Write-Host "`nOda (Room) Komutlari:" -ForegroundColor Yellow
 Write-Host "  .\controller.ps1 -ListRooms"
 Write-Host "  .\controller.ps1 -CreateRoom 'Gizli Sohbet'                     # Otomatik E2EE anahtari uretir"
 Write-Host "  .\controller.ps1 -CreateRoom 'Ozel Oda' -Password 'gizli123'    # Ozel anahtar ile olusturur"
 Write-Host "  .\controller.ps1 -CloseRoom 3"
 Write-Host "  .\controller.ps1 -OpenRoom 3"
 Write-Host "  .\controller.ps1 -DeleteRoom 3"
+
+Write-Host "`nYapilandirma (Config) Komutlari:" -ForegroundColor Yellow
+Write-Host "  .\controller.ps1 -GetConfig"
+Write-Host "  .\controller.ps1 -SetConfig -ConfigHost 127.0.0.1 -ConfigPort 8080"
+Write-Host "  .\controller.ps1 -ResetConfig"
+
+Write-Host "`nFarkli Hedef Adres/Port Icin:" -ForegroundColor DarkGray
+Write-Host "  .\controller.ps1 -Target 192.168.1.50 -Port 9000 -ListRooms`n"

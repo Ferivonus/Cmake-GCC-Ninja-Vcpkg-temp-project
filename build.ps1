@@ -26,6 +26,7 @@
     Oda icin E2EE (AES-256) sifreleme parolasi.
 #>
 [CmdletBinding()]
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password', Justification = 'CLI uzerinden duz metin parola aktarimi zorunludur')]
 param (
     [Parameter(Position = 0)]
     [ValidateSet("debug", "release", "d", "r")]
@@ -48,7 +49,7 @@ param (
     [string]$Room = "",
 
     # E2EE Sifreleme Parolasi
-    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', '')]
+    [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingPlainTextForPassword', 'Password', Justification = 'CLI uzerinden duz metin parola aktarimi zorunludur')]
     [Alias("Pass", "Key")]
     [string]$Password = "",
 
@@ -169,7 +170,7 @@ elseif ($Client -ne "") {
             if (-not $IsOnionAddress -and -not$Tor) {
                 try {
                     $resp = Invoke-RestMethod -Uri "$BaseApiUrl/api/rooms" -Method Get -TimeoutSec 2 -ErrorAction Stop
-                    $foundRoom = $resp.rooms | Where-Object { $_.name -ieq $Room } | Select-Object -First 1
+                    $foundRoom = @($resp.rooms) | Where-Object { $_.name -ieq $Room } | Select-Object -First 1
 
                     if ($foundRoom) {
                         $ResolvedRoomId = [int64]$foundRoom.id
