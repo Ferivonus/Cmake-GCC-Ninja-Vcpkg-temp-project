@@ -1,16 +1,9 @@
-// json_service.hpp
 #pragma once
+#include "config/app_config.hpp"
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-
-struct AppConfig
-{
-    std::string host;
-    int port;
-    bool active;
-};
 
 class JsonService
 {

@@ -1,4 +1,3 @@
-// db_service.cpp
 #include "services/db_service.hpp"
 #include "config/app_config.hpp"
 #include <algorithm>
@@ -7,6 +6,13 @@
 
 namespace backend
 {
+    // SQLite metin işaretçisini güvenli std::string'e dönüştüren yardımcı fonksiyon
+    static std::string safe_column_text(sqlite3_stmt *stmt, int col)
+    {
+        const auto text = sqlite3_column_text(stmt, col);
+        return text ? reinterpret_cast<const char *>(text) : std::string{};
+    }
+
     DbService::DbService() = default;
 
     DbService::~DbService()
@@ -85,7 +91,6 @@ namespace backend
         if (!db_)
             return -1;
 
-        // 1. Mevcut oda sayısını sorgula
         const char *count_sql = "SELECT COUNT(*) FROM rooms;";
         sqlite3_stmt *stmt = nullptr;
         if (sqlite3_prepare_v2(db_, count_sql, -1, &stmt, nullptr) != SQLITE_OK)
@@ -98,13 +103,11 @@ namespace backend
         }
         sqlite3_finalize(stmt);
 
-        // Zaten en az 1 oda varsa yeni oda ekleme
         if (count > 0)
         {
             return 0;
         }
 
-        // 2. Zaman damgasını oluştur
         const auto now = std::chrono::system_clock::now();
         const auto t = std::chrono::system_clock::to_time_t(now);
         std::tm tm_buf{};
@@ -117,7 +120,6 @@ namespace backend
         std::strftime(ts_buf, sizeof(ts_buf), "%Y-%m-%d %H:%M:%S", &tm_buf);
         const std::string ts_str(ts_buf);
 
-        // 3. ID 1 olacak şekilde varsayılan odayı ekle
         const char *insert_sql = "INSERT INTO rooms (id, name, is_open, created_at, updated_at) VALUES (1, ?, 1, ?, ?);";
         if (sqlite3_prepare_v2(db_, insert_sql, -1, &stmt, nullptr) != SQLITE_OK)
             return -1;
@@ -191,10 +193,10 @@ namespace backend
         {
             Room r;
             r.id = sqlite3_column_int64(stmt, 0);
-            r.name = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+            r.name = safe_column_text(stmt, 1);
             r.is_open = sqlite3_column_int(stmt, 2) == 1;
-            r.created_at = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 3));
-            r.updated_at = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 4));
+            r.created_at = safe_column_text(stmt, 3);
+            r.updated_at = safe_column_text(stmt, 4);
             rooms.push_back(std::move(r));
         }
         sqlite3_finalize(stmt);
@@ -220,10 +222,10 @@ namespace backend
         {
             Room r;
             r.id = sqlite3_column_int64(stmt, 0);
-            r.name = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1));
+            r.name = safe_column_text(stmt, 1);
             r.is_open = sqlite3_column_int(stmt, 2) == 1;
-            r.created_at = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 3));
-            r.updated_at = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 4));
+            r.created_at = safe_column_text(stmt, 3);
+            r.updated_at = safe_column_text(stmt, 4);
             res = std::move(r);
         }
         sqlite3_finalize(stmt);
@@ -339,9 +341,9 @@ namespace backend
             ChatMessage m;
             m.id = sqlite3_column_int64(stmt, 0);
             m.room_id = sqlite3_column_int64(stmt, 1);
-            m.username = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2));
-            m.message = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 3));
-            m.created_at = reinterpret_cast<const char *>(sqlite3_column_text(stmt, 4));
+            m.username = safe_column_text(stmt, 2);
+            m.message = safe_column_text(stmt, 3);
+            m.created_at = safe_column_text(stmt, 4);
             messages.push_back(std::move(m));
         }
         sqlite3_finalize(stmt);
